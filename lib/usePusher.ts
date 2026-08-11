@@ -41,6 +41,8 @@ export function usePusher(
 ) {
   const pusherRef = useRef<PusherClient | null>(null);
   const storeRef = useRef(useGameStore.getState());
+  const pendingStrokeBatch = useRef<Extract<CanvasAction, { type: "stroke" }>[]>([]);
+  const strokeFlushRaf = useRef<number | null>(null);
 
   useEffect(() => {
     storeRef.current = useGameStore.getState();
@@ -222,9 +224,18 @@ export function usePusher(
         (stroke): stroke is Extract<CanvasAction, { type: "stroke" }> =>
           stroke.type === "stroke"
       );
-      if (strokes.length > 0) {
-        storeRef.current.mergeCanvasStrokes(strokes);
-      }
+      if (strokes.length === 0) return;
+
+      pendingStrokeBatch.current.push(...strokes);
+      if (strokeFlushRaf.current !== null) return;
+
+      strokeFlushRaf.current = requestAnimationFrame(() => {
+        strokeFlushRaf.current = null;
+        const batch = pendingStrokeBatch.current.splice(0);
+        if (batch.length > 0) {
+          storeRef.current.mergeCanvasStrokes(batch);
+        }
+      });
     });
 
     channel.bind("fill", (data: { action: CanvasAction }) => {
@@ -314,6 +325,11 @@ export function usePusher(
     }, 15_000);
 
     return () => {
+      if (strokeFlushRaf.current !== null) {
+        cancelAnimationFrame(strokeFlushRaf.current);
+        strokeFlushRaf.current = null;
+      }
+      pendingStrokeBatch.current = [];
       window.clearInterval(heartbeat);
       channel.unbind_all();
       pusher.unsubscribe(`private-room-${roomId}`);

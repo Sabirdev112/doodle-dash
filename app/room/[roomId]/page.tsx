@@ -109,7 +109,9 @@ export default function RoomPage({
 
   useEffect(() => {
     if (!inLobby) return;
-    const intervalMs = phase === "waiting" ? 8000 : 4000;
+    // During drawing, canvas sync is via Pusher — full resync causes lag/flicker.
+    if (phase === "drawing") return;
+    const intervalMs = phase === "waiting" ? 8000 : 5000;
     const interval = window.setInterval(() => {
       void requestRoomResync(roomId);
     }, intervalMs);

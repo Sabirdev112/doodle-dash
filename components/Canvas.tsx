@@ -19,7 +19,6 @@ import {
 } from "@/lib/drawingTools";
 import { sendAction, useGameStore } from "@/lib/store";
 import CanvasCursor from "@/components/CanvasCursor";
-import { prepareStrokeUploadBatch } from "@/lib/strokeUpload";
 import { floodFillCanvas, floodFillImageData } from "@/lib/floodFill";
 
 export interface CanvasHandle {
@@ -131,6 +130,39 @@ function drawSoftEraserDabs(
   ctx.restore();
 }
 
+/** Draw only the newly added segment of a growing stroke (avoids full-canvas redraw). */
+function appendStrokeGrowth(
+  ctx: CanvasRenderingContext2D,
+  prev: StrokeAction,
+  next: StrokeAction,
+  w: number,
+  h: number,
+  drawStrokeFn: (
+    ctx: CanvasRenderingContext2D,
+    stroke: StrokeAction,
+    w: number,
+    h: number
+  ) => void
+) {
+  if (next.points.length <= prev.points.length) return;
+
+  const startIdx = Math.max(0, prev.points.length - 1);
+  let segment = next.points.slice(startIdx);
+  if (segment.length === 1) {
+    segment = [segment[0], { ...segment[0] }];
+  }
+
+  drawStrokeFn(
+    ctx,
+    {
+      ...next,
+      points: segment,
+    },
+    w,
+    h
+  );
+}
+
 const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
   {
     roomId,
@@ -151,11 +183,12 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
   const isDrawing = useRef(false);
   const eraserPreviewFrom = useRef(0);
   const lastRevision = useRef("");
-  const lastSent = useRef(0);
-  const strokeBatch = useRef<StrokeAction[]>([]);
+  const liveStrokeId = useRef<string | null>(null);
+  const liveSentPointCount = useRef(0);
+  const lastLiveSent = useRef(0);
   const renderedCount = useRef(0);
+  const renderedPointCounts = useRef<Map<string, number>>(new Map());
   const fillInProgress = useRef(false);
-  const flushInFlight = useRef(false);
   const prevActionsRef = useRef<CanvasAction[]>([]);
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(
     null
@@ -246,6 +279,51 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     ctx.restore();
   };
 
+  const buildStrokeAction = useCallback(
+    (id: string, points: Point[]): StrokeAction => ({
+      id,
+      type: "stroke",
+      color: tool === "eraser" ? "#000000" : color,
+      size,
+      points: [...points],
+      isEraser: tool === "eraser",
+      opacity: strokeOpacityForTool(tool),
+    }),
+    [color, size, tool]
+  );
+
+  const sendStrokeChunk = useCallback(
+    (stroke: StrokeAction) => {
+      void sendAction({
+        type: "draw_strokes",
+        roomId,
+        playerId,
+        strokes: [stroke],
+      }).catch(() => {
+        /* best-effort live stream */
+      });
+    },
+    [roomId, playerId]
+  );
+
+  const maybeStreamLiveStroke = useCallback(() => {
+    if (!liveStrokeId.current || !isStrokeTool(tool)) return;
+    const points = currentStroke.current;
+    if (points.length < 2) return;
+
+    const now = Date.now();
+    if (now - lastLiveSent.current < 16) return;
+    if (points.length <= liveSentPointCount.current) return;
+
+    const overlap = Math.max(0, liveSentPointCount.current - 1);
+    const chunkPoints = points.slice(overlap);
+    if (chunkPoints.length < 2) return;
+
+    lastLiveSent.current = now;
+    liveSentPointCount.current = points.length;
+    sendStrokeChunk(buildStrokeAction(liveStrokeId.current, chunkPoints));
+  }, [buildStrokeAction, sendStrokeChunk, tool]);
+
   const applyFillSync = (
     ctx: CanvasRenderingContext2D,
     action: FillAction,
@@ -291,6 +369,9 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     ctx.fillRect(0, 0, bg.width, bg.height);
     for (const action of actions) {
       renderAction(action);
+      if (action.type === "stroke") {
+        renderedPointCounts.current.set(action.id, action.points.length);
+      }
     }
     renderedCount.current = actions.length;
     lastRevision.current = actionsRevision(actions);
@@ -304,15 +385,23 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
       return;
     }
 
+    const bg = bgRef.current;
+    const ctx = getCtx(bg);
+
     if (actions.length < renderedCount.current) {
+      renderedPointCounts.current.clear();
       redrawAll();
       prevActionsRef.current = actions;
       return;
     }
 
-    if (actions.length > renderedCount.current) {
+    if (actions.length > renderedCount.current && bg && ctx) {
       for (let i = renderedCount.current; i < actions.length; i++) {
         renderAction(actions[i]);
+        const action = actions[i];
+        if (action.type === "stroke") {
+          renderedPointCounts.current.set(action.id, action.points.length);
+        }
       }
       renderedCount.current = actions.length;
       lastRevision.current = revision;
@@ -320,14 +409,30 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
       return;
     }
 
-    if (strokeGrew(prevActionsRef.current, actions)) {
-      redrawAll();
-      prevActionsRef.current = actions;
-    } else {
+    if (strokeGrew(prevActionsRef.current, actions) && bg && ctx) {
+      const w = bg.width;
+      const h = bg.height;
+      for (let i = 0; i < actions.length; i++) {
+        const prev = prevActionsRef.current[i];
+        const next = actions[i];
+        if (
+          prev?.type === "stroke" &&
+          next.type === "stroke" &&
+          prev.id === next.id &&
+          next.points.length > prev.points.length
+        ) {
+          appendStrokeGrowth(ctx, prev, next, w, h, drawStroke);
+          renderedPointCounts.current.set(next.id, next.points.length);
+        }
+      }
       lastRevision.current = revision;
       prevActionsRef.current = actions;
+      return;
     }
-  }, [actions, renderAction, redrawAll]);
+
+    lastRevision.current = revision;
+    prevActionsRef.current = actions;
+  }, [actions, renderAction, redrawAll, drawStroke]);
 
   const resizeCanvas = useCallback(() => {
     const container = containerRef.current;
@@ -345,6 +450,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     active.width = w;
     active.height = h;
     renderedCount.current = 0;
+    renderedPointCounts.current.clear();
     lastRevision.current = "";
     redrawAll();
   }, [redrawAll]);
@@ -355,40 +461,6 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     if (containerRef.current) observer.observe(containerRef.current);
     return () => observer.disconnect();
   }, [resizeCanvas]);
-
-  const flushStrokes = useCallback(async () => {
-    if (strokeBatch.current.length === 0 || flushInFlight.current) return;
-
-    flushInFlight.current = true;
-    const pending = [...strokeBatch.current];
-    strokeBatch.current = [];
-    const chunks = prepareStrokeUploadBatch(pending);
-    const failed: StrokeAction[] = [];
-
-    try {
-      for (const chunk of chunks) {
-        try {
-          const res = await sendAction({
-            type: "draw_strokes",
-            roomId,
-            playerId,
-            strokes: chunk,
-          });
-          const data = (await res.json()) as { ok?: boolean; dropped?: boolean };
-          if (!res.ok || !data.ok) {
-            failed.push(...chunk);
-          }
-        } catch {
-          failed.push(...chunk);
-        }
-      }
-    } finally {
-      flushInFlight.current = false;
-      if (failed.length > 0) {
-        strokeBatch.current.unshift(...failed);
-      }
-    }
-  }, [roomId, playerId]);
 
   const sendFill = async (action: FillAction) => {
     if (fillInProgress.current) return;
@@ -489,6 +561,9 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     isDrawing.current = true;
     updateCursor(e);
     eraserPreviewFrom.current = 0;
+    liveStrokeId.current = nanoid();
+    liveSentPointCount.current = 0;
+    lastLiveSent.current = 0;
     currentStroke.current = [normPoint(e, active)];
 
     if (tool === "fill") {
@@ -523,6 +598,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     const newPoints = interpolatePoints(prev, pt, minDist * 0.65);
     currentStroke.current.push(...newPoints);
     previewStroke(currentStroke.current);
+    maybeStreamLiveStroke();
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
@@ -544,46 +620,44 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
       currentStroke.current.push({ ...currentStroke.current[0] });
     }
 
-    const stroke: StrokeAction = {
-      id: nanoid(),
-      type: "stroke",
-      color: tool === "eraser" ? "#000000" : color,
-      size,
-      points: [...currentStroke.current],
-      isEraser: tool === "eraser",
-      opacity: strokeOpacityForTool(tool),
-    };
+    const strokeId = liveStrokeId.current ?? nanoid();
+    const stroke = buildStrokeAction(strokeId, currentStroke.current);
 
     const eraserAlreadyApplied = tool === "eraser" && eraserPreviewFrom.current > 0;
     currentStroke.current = [];
     eraserPreviewFrom.current = 0;
+    liveStrokeId.current = null;
 
     if (!eraserAlreadyApplied) {
       renderAction(stroke);
     }
 
-    renderedCount.current++;
-    useGameStore.getState().addCanvasActions([stroke]);
-    strokeBatch.current.push(stroke);
-
-    const now = Date.now();
-    if (now - lastSent.current >= 32) {
-      lastSent.current = now;
-      void flushStrokes();
+    useGameStore.getState().mergeCanvasStrokes([stroke]);
+    const merged = useGameStore.getState().canvasActions;
+    lastRevision.current = actionsRevision(merged);
+    prevActionsRef.current = merged;
+    const idx = merged.findIndex((a) => a.id === stroke.id);
+    if (idx >= 0) {
+      renderedCount.current = Math.max(renderedCount.current, idx + 1);
+      const mergedStroke = merged[idx];
+      if (mergedStroke.type === "stroke") {
+        renderedPointCounts.current.set(stroke.id, mergedStroke.points.length);
+      }
     }
+
+    const overlap = Math.max(0, liveSentPointCount.current - 1);
+    const tail = stroke.points.slice(overlap);
+    if (tail.length >= 1) {
+      const tailPoints = tail.length === 1 ? [tail[0], { ...tail[0] }] : tail;
+      sendStrokeChunk(buildStrokeAction(strokeId, tailPoints));
+    }
+    liveSentPointCount.current = 0;
   };
 
   const onPointerLeave = (e: React.PointerEvent) => {
     setCursorVisible(false);
     onPointerUp(e);
   };
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      void flushStrokes();
-    }, 80);
-    return () => clearInterval(interval);
-  }, [flushStrokes]);
 
   const canDraw = isDrawer && !disabled;
 

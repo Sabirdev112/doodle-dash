@@ -983,7 +983,7 @@ export async function handleDrawStrokes(
     event: "draw_strokes",
     payload: { strokes: accepted },
   });
-  await persistRoom(room);
+  void persistRoom(room);
   return true;
 }
 
