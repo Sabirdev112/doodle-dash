@@ -1,7 +1,6 @@
 import { customAlphabet } from "nanoid";
 import { nanoid } from "nanoid";
 import { triggerRoomEvent, triggerRoomEvents } from "./realtime";
-import { prepareStrokeUploadBatch } from "./strokeUpload";
 import {
   getDrawerPoints,
   getGuesserPoints,
@@ -789,6 +788,8 @@ export async function handleDrawStrokes(
     await broadcastWordDisplay(room);
   }
 
+  const accepted: StrokeAction[] = [];
+
   for (const stroke of strokes) {
     if (
       stroke.points.length === 0 ||
@@ -798,19 +799,22 @@ export async function handleDrawStrokes(
     ) {
       continue;
     }
-    room.canvasActions.push(stroke);
+
+    const last = room.canvasActions[room.canvasActions.length - 1];
+    if (last?.type === "stroke" && last.id === stroke.id) {
+      last.points.push(...stroke.points.slice(1));
+    } else {
+      room.canvasActions.push({ ...stroke, points: [...stroke.points] });
+    }
+    accepted.push({ ...stroke, points: [...stroke.points] });
   }
 
-  const strokeChunks = prepareStrokeUploadBatch(strokes);
-  await triggerRoomEvents(
-    roomId,
-    strokeChunks.flatMap((chunk) =>
-      chunk.map((stroke) => ({
-        event: "draw_strokes",
-        payload: { strokes: [stroke] },
-      }))
-    )
-  );
+  if (accepted.length === 0) return false;
+
+  await triggerRoomEvent(roomId, {
+    event: "draw_strokes",
+    payload: { strokes: accepted },
+  });
   return true;
 }
 

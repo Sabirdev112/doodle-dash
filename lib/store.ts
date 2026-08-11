@@ -11,8 +11,10 @@ import type {
   RoomSettings,
   RoomSnapshot,
   SessionPlayer,
+  StrokeAction,
   TurnPointAward,
 } from "@/lib/types";
+import { applyCanvasStrokeUpdates } from "./canvasStrokes";
 
 interface GameStore {
   player: SessionPlayer | null;
@@ -52,6 +54,8 @@ interface GameStore {
   addChatMessage: (msg: ChatMessage) => void;
   addReaction: (reaction: ReactionEvent) => void;
   addCanvasActions: (actions: CanvasAction[]) => void;
+  mergeCanvasStrokes: (strokes: StrokeAction[]) => void;
+  popCanvasAction: () => CanvasAction | null;
   removeCanvasAction: (actionId: string) => void;
   clearCanvas: () => void;
   updateScore: (
@@ -144,6 +148,34 @@ export const useGameStore = create<GameStore>()((set, get) => ({
       canvasActions: [...state.canvasActions, ...actions],
     })),
 
+  mergeCanvasStrokes: (strokes) =>
+    set((state) => {
+      const next = applyCanvasStrokeUpdates(state.canvasActions, strokes);
+      const changed =
+        next.length !== state.canvasActions.length ||
+        next.some((action, index) => {
+          const prev = state.canvasActions[index];
+          if (action !== prev) return true;
+          if (
+            action.type === "stroke" &&
+            prev?.type === "stroke" &&
+            action.points.length !== prev.points.length
+          ) {
+            return true;
+          }
+          return false;
+        });
+      return changed ? { canvasActions: next } : state;
+    }),
+
+  popCanvasAction: () => {
+    const { canvasActions } = get();
+    if (canvasActions.length === 0) return null;
+    const removed = canvasActions[canvasActions.length - 1];
+    set({ canvasActions: canvasActions.slice(0, -1) });
+    return removed;
+  },
+
   removeCanvasAction: (actionId) =>
     set((state) => ({
       canvasActions: state.canvasActions.filter((a) => a.id !== actionId),
@@ -198,10 +230,7 @@ export const useGameStore = create<GameStore>()((set, get) => ({
       turnEndTime: snapshot.turnEndTime,
       canvasActions:
         snapshot.canvasActions !== undefined
-          ? snapshot.phase !== state.phase ||
-            snapshot.canvasActions.length >= state.canvasActions.length
-            ? snapshot.canvasActions
-            : state.canvasActions
+          ? snapshot.canvasActions
           : state.canvasActions,
       chatMessages:
         snapshot.chatMessages !== undefined

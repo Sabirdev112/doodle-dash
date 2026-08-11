@@ -1,6 +1,7 @@
 "use client";
 
 import { parseAvatar, type AvatarConfig } from "@/lib/avatars";
+import type { FaceId } from "@/lib/avatars";
 
 const INK = "#2c2416";
 const STROKE = 1.5;
@@ -38,7 +39,7 @@ export default function AvatarDisplay({
         <FaceLayer face={config.face} />
       </g>
       <g className="avatar-headgear">
-        <HeadgearLayer headgear={config.headgear} />
+        <HeadgearLayer headgear={config.headgear} face={config.face} />
       </g>
     </svg>
   );
@@ -336,66 +337,94 @@ function FaceLayer({ face }: { face: AvatarConfig["face"] }) {
 
 /* ── Headgear layer ── */
 
-function HeadgearLayer({ headgear }: { headgear: AvatarConfig["headgear"] }) {
+/** Per-face vertical nudge so headgear sits on the head, not over the eyes. */
+const HEADGEAR_NUDGE_Y: Record<FaceId, number> = {
+  cat: 0,
+  dog: 0,
+  fox: 1,
+  owl: -2,
+  panda: -2,
+  robot: -6,
+  alien: -1,
+  ghost: -2,
+};
+
+function HeadgearLayer({
+  headgear,
+  face,
+}: {
+  headgear: AvatarConfig["headgear"];
+  face: FaceId;
+}) {
+  if (headgear === "none") return null;
+
+  const nudgeY = HEADGEAR_NUDGE_Y[face];
+
+  return (
+    <g transform={nudgeY !== 0 ? `translate(0, ${nudgeY})` : undefined}>
+      <HeadgearShape headgear={headgear} />
+    </g>
+  );
+}
+
+function HeadgearShape({ headgear }: { headgear: Exclude<AvatarConfig["headgear"], "none"> }) {
   switch (headgear) {
     case "cap":
       return (
         <>
-          <path d="M12 22 Q32 6 52 22 L54 26 L10 26 Z" fill="#4cc9f0" stroke={INK} strokeWidth={STROKE} />
-          <path d="M10 26 L6 28 L54 28 L50 26 Z" fill="#38bdf8" stroke={INK} strokeWidth={STROKE} />
-          <ellipse cx="32" cy="22" rx="4" ry="2" fill="#fff" stroke={INK} strokeWidth="0.8" opacity="0.7" />
+          <path d="M12 14 Q32 2 52 14 L54 18 L10 18 Z" fill="#4cc9f0" stroke={INK} strokeWidth={STROKE} />
+          <path d="M10 18 L6 20 L54 20 L50 18 Z" fill="#38bdf8" stroke={INK} strokeWidth={STROKE} />
+          <ellipse cx="32" cy="10" rx="4" ry="2" fill="#fff" stroke={INK} strokeWidth="0.8" opacity="0.7" />
         </>
       );
     case "crown":
       return (
         <>
           <path
-            d="M16 20 L20 8 L24 16 L32 4 L40 16 L44 8 L48 20 L48 24 L16 24 Z"
+            d="M16 14 L20 4 L24 10 L32 2 L40 10 L44 4 L48 14 L48 18 L16 18 Z"
             fill="#ffd166"
             stroke={INK}
             strokeWidth={STROKE}
           />
-          <circle cx="20" cy="14" r="1.5" fill="#ff6b6b" stroke={INK} strokeWidth="0.6" />
-          <circle cx="32" cy="10" r="1.5" fill="#4cc9f0" stroke={INK} strokeWidth="0.6" />
-          <circle cx="44" cy="14" r="1.5" fill="#06d6a0" stroke={INK} strokeWidth="0.6" />
+          <circle cx="20" cy="8" r="1.5" fill="#ff6b6b" stroke={INK} strokeWidth="0.6" />
+          <circle cx="32" cy="4" r="1.5" fill="#4cc9f0" stroke={INK} strokeWidth="0.6" />
+          <circle cx="44" cy="8" r="1.5" fill="#06d6a0" stroke={INK} strokeWidth="0.6" />
         </>
       );
     case "headphones":
       return (
         <>
           <path
-            d="M14 24 Q14 8 32 8 Q50 8 50 24"
+            d="M14 20 Q14 4 32 4 Q50 4 50 20"
             fill="none"
             stroke={INK}
             strokeWidth="3"
             strokeLinecap="round"
           />
-          <rect x="10" y="22" width="9" height="14" rx="4" fill="#9b5de5" stroke={INK} strokeWidth={STROKE} />
-          <rect x="45" y="22" width="9" height="14" rx="4" fill="#9b5de5" stroke={INK} strokeWidth={STROKE} />
-          <rect x="12" y="26" width="5" height="8" rx="2" fill="#7c3aed" stroke={INK} strokeWidth="0.8" />
-          <rect x="47" y="26" width="5" height="8" rx="2" fill="#7c3aed" stroke={INK} strokeWidth="0.8" />
+          <rect x="10" y="18" width="9" height="14" rx="4" fill="#9b5de5" stroke={INK} strokeWidth={STROKE} />
+          <rect x="45" y="18" width="9" height="14" rx="4" fill="#9b5de5" stroke={INK} strokeWidth={STROKE} />
+          <rect x="12" y="22" width="5" height="8" rx="2" fill="#7c3aed" stroke={INK} strokeWidth="0.8" />
+          <rect x="47" y="22" width="5" height="8" rx="2" fill="#7c3aed" stroke={INK} strokeWidth="0.8" />
         </>
       );
     case "bow":
       return (
         <>
-          <path d="M20 12 L32 18 L20 24 Z" fill="#ff6b6b" stroke={INK} strokeWidth="1.2" />
-          <path d="M44 12 L32 18 L44 24 Z" fill="#ff6b6b" stroke={INK} strokeWidth="1.2" />
-          <circle cx="32" cy="18" r="3.5" fill="#ef4444" stroke={INK} strokeWidth="1.2" />
-          <path d="M32 14 L32 22" stroke="#fff" strokeWidth="1" opacity="0.4" />
+          <path d="M20 6 L32 12 L20 18 Z" fill="#ff6b6b" stroke={INK} strokeWidth="1.2" />
+          <path d="M44 6 L32 12 L44 18 Z" fill="#ff6b6b" stroke={INK} strokeWidth="1.2" />
+          <circle cx="32" cy="12" r="3.5" fill="#ef4444" stroke={INK} strokeWidth="1.2" />
+          <path d="M32 8 L32 16" stroke="#fff" strokeWidth="1" opacity="0.4" />
         </>
       );
     case "party":
       return (
         <>
-          <path d="M26 6 L32 0 L38 6 L32 14 Z" fill="#ff6b6b" stroke={INK} strokeWidth="1.2" className="avatar-party-hat" />
-          <circle cx="22" cy="10" r="2" fill="#ffd166" stroke={INK} strokeWidth="1" className="avatar-confetti" style={{ animationDelay: "0s" }} />
-          <circle cx="42" cy="8" r="2" fill="#4cc9f0" stroke={INK} strokeWidth="1" className="avatar-confetti" style={{ animationDelay: "0.3s" }} />
-          <circle cx="38" cy="14" r="1.5" fill="#06d6a0" stroke={INK} strokeWidth="1" className="avatar-confetti" style={{ animationDelay: "0.6s" }} />
-          <circle cx="46" cy="12" r="1.5" fill="#9b5de5" stroke={INK} strokeWidth="1" className="avatar-confetti" style={{ animationDelay: "0.9s" }} />
+          <path d="M26 4 L32 0 L38 4 L32 12 Z" fill="#ff6b6b" stroke={INK} strokeWidth="1.2" className="avatar-party-hat" />
+          <circle cx="22" cy="6" r="2" fill="#ffd166" stroke={INK} strokeWidth="1" className="avatar-confetti" style={{ animationDelay: "0s" }} />
+          <circle cx="42" cy="4" r="2" fill="#4cc9f0" stroke={INK} strokeWidth="1" className="avatar-confetti" style={{ animationDelay: "0.3s" }} />
+          <circle cx="38" cy="10" r="1.5" fill="#06d6a0" stroke={INK} strokeWidth="1" className="avatar-confetti" style={{ animationDelay: "0.6s" }} />
+          <circle cx="46" cy="8" r="1.5" fill="#9b5de5" stroke={INK} strokeWidth="1" className="avatar-confetti" style={{ animationDelay: "0.9s" }} />
         </>
       );
-    default:
-      return null;
   }
 }

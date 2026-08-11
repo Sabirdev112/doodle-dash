@@ -1,4 +1,3 @@
-import { nanoid } from "nanoid";
 import type { StrokeAction } from "@/lib/types";
 
 export const MAX_STROKE_POINTS = 100;
@@ -27,7 +26,7 @@ export function splitStrokeForUpload(
 
     segments.push({
       ...stroke,
-      id: segments.length === 0 ? stroke.id : nanoid(),
+      id: stroke.id,
       points: slice,
     });
 

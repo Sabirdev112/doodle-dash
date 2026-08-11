@@ -277,7 +277,7 @@
 
   .avatar-party-hat {
     animation: avatar-party-wiggle 1.5s ease-in-out infinite;
-    transform-origin: 32px 14px;
+    transform-origin: 32px 8px;
   }
 
   .avatar-confetti {

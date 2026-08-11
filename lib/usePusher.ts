@@ -220,13 +220,12 @@ export function usePusher(
     });
 
     channel.bind("draw_strokes", (data: { strokes: CanvasAction[] }) => {
-      const s = storeRef.current;
-      const existing = new Set(s.canvasActions.map((action) => action.id));
       const strokes = data.strokes.filter(
-        (stroke) => stroke.type === "stroke" && !existing.has(stroke.id)
-      ) as CanvasAction[];
+        (stroke): stroke is Extract<CanvasAction, { type: "stroke" }> =>
+          stroke.type === "stroke"
+      );
       if (strokes.length > 0) {
-        s.addCanvasActions(strokes);
+        storeRef.current.mergeCanvasStrokes(strokes);
       }
     });
 

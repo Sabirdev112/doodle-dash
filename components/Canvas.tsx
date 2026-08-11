@@ -37,6 +37,33 @@ interface CanvasProps {
   disabled?: boolean;
 }
 
+function actionsRevision(actions: CanvasAction[]): string {
+  return actions
+    .map((action) =>
+      action.type === "stroke"
+        ? `${action.id}:${action.points.length}`
+        : `${action.id}:${action.type}`
+    )
+    .join("|");
+}
+
+function strokeGrew(previous: CanvasAction[], next: CanvasAction[]): boolean {
+  if (next.length !== previous.length) return false;
+  for (let i = 0; i < next.length; i++) {
+    const n = next[i];
+    const p = previous[i];
+    if (
+      n.type === "stroke" &&
+      p.type === "stroke" &&
+      n.id === p.id &&
+      n.points.length > p.points.length
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function interpolatePoints(prev: Point, next: Point, maxStep: number): Point[] {
   const dx = next.x - prev.x;
   const dy = next.y - prev.y;
@@ -122,12 +149,14 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
   const containerRef = useRef<HTMLDivElement>(null);
   const currentStroke = useRef<Point[]>([]);
   const isDrawing = useRef(false);
-  const pendingRemote = useRef<CanvasAction[]>([]);
-  const rafId = useRef<number | null>(null);
+  const eraserPreviewFrom = useRef(0);
+  const lastRevision = useRef("");
   const lastSent = useRef(0);
   const strokeBatch = useRef<StrokeAction[]>([]);
   const renderedCount = useRef(0);
   const fillInProgress = useRef(false);
+  const flushInFlight = useRef(false);
+  const prevActionsRef = useRef<CanvasAction[]>([]);
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(
     null
   );
@@ -264,31 +293,41 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
       renderAction(action);
     }
     renderedCount.current = actions.length;
+    lastRevision.current = actionsRevision(actions);
   }, [actions, renderAction]);
 
   useEffect(() => {
+    const revision = actionsRevision(actions);
+
+    if (revision === lastRevision.current) {
+      prevActionsRef.current = actions;
+      return;
+    }
+
     if (actions.length < renderedCount.current) {
       redrawAll();
-    } else if (actions.length > renderedCount.current) {
+      prevActionsRef.current = actions;
+      return;
+    }
+
+    if (actions.length > renderedCount.current) {
       for (let i = renderedCount.current; i < actions.length; i++) {
-        pendingRemote.current.push(actions[i]);
+        renderAction(actions[i]);
       }
-      if (!rafId.current) {
-        rafId.current = requestAnimationFrame(() => {
-          while (pendingRemote.current.length > 0) {
-            const action = pendingRemote.current.shift()!;
-            renderAction(action);
-          }
-          renderedCount.current = actions.length;
-          rafId.current = null;
-        });
-      }
+      renderedCount.current = actions.length;
+      lastRevision.current = revision;
+      prevActionsRef.current = actions;
+      return;
+    }
+
+    if (strokeGrew(prevActionsRef.current, actions)) {
+      redrawAll();
+      prevActionsRef.current = actions;
+    } else {
+      lastRevision.current = revision;
+      prevActionsRef.current = actions;
     }
   }, [actions, renderAction, redrawAll]);
-
-  useEffect(() => {
-    redrawAll();
-  }, [redrawAll]);
 
   const resizeCanvas = useCallback(() => {
     const container = containerRef.current;
@@ -305,6 +344,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     bg.height = h;
     active.width = w;
     active.height = h;
+    renderedCount.current = 0;
+    lastRevision.current = "";
     redrawAll();
   }, [redrawAll]);
 
@@ -316,32 +357,36 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
   }, [resizeCanvas]);
 
   const flushStrokes = useCallback(async () => {
-    if (strokeBatch.current.length === 0) return;
+    if (strokeBatch.current.length === 0 || flushInFlight.current) return;
 
+    flushInFlight.current = true;
     const pending = [...strokeBatch.current];
     strokeBatch.current = [];
     const chunks = prepareStrokeUploadBatch(pending);
     const failed: StrokeAction[] = [];
 
-    for (const chunk of chunks) {
-      try {
-        const res = await sendAction({
-          type: "draw_strokes",
-          roomId,
-          playerId,
-          strokes: chunk,
-        });
-        const data = (await res.json()) as { ok?: boolean; dropped?: boolean };
-        if (!res.ok || (!data.ok && !data.dropped)) {
+    try {
+      for (const chunk of chunks) {
+        try {
+          const res = await sendAction({
+            type: "draw_strokes",
+            roomId,
+            playerId,
+            strokes: chunk,
+          });
+          const data = (await res.json()) as { ok?: boolean; dropped?: boolean };
+          if (!res.ok || (!data.ok && !data.dropped)) {
+            failed.push(...chunk);
+          }
+        } catch {
           failed.push(...chunk);
         }
-      } catch {
-        failed.push(...chunk);
       }
-    }
-
-    if (failed.length > 0) {
-      strokeBatch.current.push(...failed);
+    } finally {
+      flushInFlight.current = false;
+      if (failed.length > 0) {
+        strokeBatch.current.unshift(...failed);
+      }
     }
   }, [roomId, playerId]);
 
@@ -363,13 +408,56 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
   };
 
   const handleUndo = async () => {
+    const state = useGameStore.getState();
+    if (state.canvasActions.length === 0) return;
+
+    renderedCount.current = state.canvasActions.length;
+    state.popCanvasAction();
     await sendAction({ type: "undo", roomId, playerId });
   };
 
   useImperativeHandle(ref, () => ({ undo: handleUndo }));
 
+  const previewEraserOnBg = useCallback(
+    (points: Point[]) => {
+      const bg = bgRef.current;
+      const ctx = getCtx(bg);
+      if (!bg || !ctx || points.length === 0) return;
+
+      const w = bg.width;
+      const h = bg.height;
+      const strokeSize = effectiveStrokeSize("eraser", size);
+      const radius = strokeSize / 2;
+      const step = Math.max(radius * 0.35, 2) / Math.max(w, h);
+
+      const from = Math.max(0, eraserPreviewFrom.current - 1);
+      const segment = points.slice(from);
+      if (segment.length === 0) return;
+
+      const dabPoints: Point[] = [segment[0]];
+      for (let i = 1; i < segment.length; i++) {
+        dabPoints.push(...interpolatePoints(segment[i - 1], segment[i], step));
+      }
+
+      drawSoftEraserDabs(ctx, dabPoints, radius, w, h);
+      eraserPreviewFrom.current = points.length;
+
+      const active = activeRef.current;
+      const activeCtx = getCtx(active);
+      if (active && activeCtx) {
+        activeCtx.clearRect(0, 0, active.width, active.height);
+      }
+    },
+    [size]
+  );
+
   const previewStroke = useCallback(
     (points: Point[]) => {
+      if (tool === "eraser") {
+        previewEraserOnBg(points);
+        return;
+      }
+
       const active = activeRef.current;
       const ctx = getCtx(active);
       if (!active || !ctx) return;
@@ -378,20 +466,19 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
       const h = active.height;
       ctx.clearRect(0, 0, w, h);
 
-      const strokeSize = effectiveStrokeSize(tool, size);
       const preview: StrokeAction = {
         id: "preview",
         type: "stroke",
-        color: tool === "eraser" ? "#000" : color,
+        color,
         size,
         points,
-        isEraser: tool === "eraser",
+        isEraser: false,
         opacity: strokeOpacityForTool(tool),
       };
 
       drawStroke(ctx, preview, w, h);
     },
-    [color, size, tool]
+    [color, previewEraserOnBg, size, tool]
   );
 
   const onPointerDown = (e: React.PointerEvent) => {
@@ -401,6 +488,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     active.setPointerCapture(e.pointerId);
     isDrawing.current = true;
     updateCursor(e);
+    eraserPreviewFrom.current = 0;
     currentStroke.current = [normPoint(e, active)];
 
     if (tool === "fill") {
@@ -437,7 +525,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     previewStroke(currentStroke.current);
   };
 
-  const onPointerUp = async (e: React.PointerEvent) => {
+  const onPointerUp = (e: React.PointerEvent) => {
     updateCursor(e);
     if (!isDrawing.current) return;
     isDrawing.current = false;
@@ -448,6 +536,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
 
     if (currentStroke.current.length < 1) {
       currentStroke.current = [];
+      eraserPreviewFrom.current = 0;
       return;
     }
 
@@ -465,28 +554,34 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
       opacity: strokeOpacityForTool(tool),
     };
 
+    const eraserAlreadyApplied = tool === "eraser" && eraserPreviewFrom.current > 0;
     currentStroke.current = [];
-    renderAction(stroke);
+    eraserPreviewFrom.current = 0;
+
+    if (!eraserAlreadyApplied) {
+      renderAction(stroke);
+    }
+
     renderedCount.current++;
     useGameStore.getState().addCanvasActions([stroke]);
     strokeBatch.current.push(stroke);
 
     const now = Date.now();
-    if (now - lastSent.current >= 50) {
+    if (now - lastSent.current >= 32) {
       lastSent.current = now;
-      await flushStrokes();
+      void flushStrokes();
     }
   };
 
   const onPointerLeave = (e: React.PointerEvent) => {
     setCursorVisible(false);
-    void onPointerUp(e);
+    onPointerUp(e);
   };
 
   useEffect(() => {
     const interval = setInterval(() => {
       void flushStrokes();
-    }, 100);
+    }, 80);
     return () => clearInterval(interval);
   }, [flushStrokes]);
 
