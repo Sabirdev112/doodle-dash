@@ -1,10 +1,14 @@
+function normalizeForMatch(text: string): string {
+  return text.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 export function isExactMatch(guess: string, word: string): boolean {
-  return guess.trim().toLowerCase() === word.trim().toLowerCase();
+  return normalizeForMatch(guess) === normalizeForMatch(word);
 }
 
 export function isCloseGuess(guess: string, word: string): boolean {
-  const g = guess.trim().toLowerCase();
-  const w = word.trim().toLowerCase();
+  const g = normalizeForMatch(guess);
+  const w = normalizeForMatch(word);
   if (g.length !== w.length || g.length === 0) return false;
   let mismatches = 0;
   for (let i = 0; i < g.length; i++) {
