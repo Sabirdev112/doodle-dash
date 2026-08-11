@@ -9,6 +9,7 @@ type StoredPlayer = Player;
 interface StoredRoom {
   id: string;
   createdAt: number;
+  updatedAt?: number;
   settings: Room["settings"];
   players: StoredPlayer[];
   playerOrder: string[];
@@ -19,6 +20,7 @@ interface StoredRoom {
   secretWord: string | null;
   wordChoices: string[];
   wordChoiceDeadline: number | null;
+  phaseDeadline?: number | null;
   turnStartTime: number | null;
   turnEndTime: number | null;
   canvasActions: Room["canvasActions"];
@@ -68,6 +70,7 @@ export function serializeRoom(room: Room): StoredRoom {
   return {
     id: room.id,
     createdAt: room.createdAt,
+    updatedAt: room.updatedAt,
     settings: room.settings,
     players: Array.from(room.players.values()),
     playerOrder: room.playerOrder,
@@ -78,6 +81,7 @@ export function serializeRoom(room: Room): StoredRoom {
     secretWord: room.secretWord,
     wordChoices: room.wordChoices,
     wordChoiceDeadline: room.wordChoiceDeadline,
+    phaseDeadline: room.phaseDeadline,
     turnStartTime: room.turnStartTime,
     turnEndTime: room.turnEndTime,
     canvasActions: room.canvasActions,
@@ -98,6 +102,8 @@ export function serializeRoom(room: Room): StoredRoom {
 export function deserializeRoom(stored: StoredRoom): Room {
   return {
     ...stored,
+    updatedAt: stored.updatedAt ?? stored.createdAt,
+    phaseDeadline: stored.phaseDeadline ?? null,
     players: new Map(stored.players.map((player) => [player.id, player])),
     votekickVotes: new Set(stored.votekickVotes),
     turnTimer: null,

@@ -311,7 +311,7 @@ export function usePusher(
         },
         body: JSON.stringify({ type: "ping", roomId }),
       });
-    }, 45_000);
+    }, 15_000);
 
     return () => {
       window.clearInterval(heartbeat);

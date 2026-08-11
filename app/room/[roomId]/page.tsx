@@ -108,10 +108,11 @@ export default function RoomPage({
   usePusher(inLobby ? roomId : "", player?.id ?? "", sessionToken ?? "");
 
   useEffect(() => {
-    if (!inLobby || phase !== "waiting") return;
+    if (!inLobby) return;
+    const intervalMs = phase === "waiting" ? 8000 : 4000;
     const interval = window.setInterval(() => {
       void requestRoomResync(roomId);
-    }, 8000);
+    }, intervalMs);
     return () => window.clearInterval(interval);
   }, [inLobby, phase, roomId]);
 

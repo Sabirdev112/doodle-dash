@@ -81,6 +81,7 @@ function clearRoomTimers(room: Room): void {
 }
 
 async function persistRoom(room: Room): Promise<void> {
+  room.updatedAt = Date.now();
   rooms.set(room.id, room);
   await savePersistedRoom(room);
 }
@@ -126,6 +127,16 @@ async function processDeadlines(room: Room): Promise<void> {
   const now = Date.now();
 
   if (
+    room.phase === "turn_end" &&
+    room.phaseDeadline &&
+    now >= room.phaseDeadline
+  ) {
+    room.phaseDeadline = null;
+    await advanceTurn(room.id);
+    return;
+  }
+
+  if (
     room.phase === "word_select" &&
     room.wordChoiceDeadline &&
     now >= room.wordChoiceDeadline &&
@@ -151,20 +162,25 @@ export async function ensureRoom(roomId: string): Promise<Room | undefined> {
       return undefined;
     }
 
-    const existing = rooms.get(roomId);
-    if (existing) clearRoomTimers(existing);
+    const cached = rooms.get(roomId);
+    if (!cached || persisted.updatedAt > cached.updatedAt) {
+      if (cached) clearRoomTimers(cached);
+      rooms.set(roomId, persisted);
+      rescheduleTimers(persisted);
+    }
 
-    rooms.set(roomId, persisted);
-    rescheduleTimers(persisted);
+    const room = rooms.get(roomId);
+    if (!room) return undefined;
 
-    if (Date.now() - persisted.createdAt > ROOM_TTL_MS) {
-      clearRoomTimers(persisted);
+    if (Date.now() - room.createdAt > ROOM_TTL_MS) {
+      clearRoomTimers(room);
       rooms.delete(roomId);
       await deletePersistedRoom(roomId);
       return undefined;
     }
 
-    await processDeadlines(persisted);
+    pruneInactivePlayers(room);
+    await processDeadlines(room);
     return rooms.get(roomId);
   }
 
@@ -177,6 +193,7 @@ export async function ensureRoom(roomId: string): Promise<Room | undefined> {
     return undefined;
   }
 
+  pruneInactivePlayers(room);
   await processDeadlines(room);
   return rooms.get(roomId);
 }
@@ -231,6 +248,18 @@ function isPlayerIdle(player: Player): boolean {
 function isPlayerReconnectable(player: Player): boolean {
   const lastSeen = player.lastSeenAt ?? player.joinedAt;
   return Date.now() - lastSeen > PLAYER_RECONNECT_GRACE_MS;
+}
+
+function findUniquePlayerByName(room: Room, name: string): Player | undefined {
+  const key = name.trim().toLowerCase();
+  const matches = room.playerOrder
+    .map((id) => room.players.get(id))
+    .filter(
+      (player): player is Player =>
+        !!player && player.name.trim().toLowerCase() === key
+    );
+  if (matches.length !== 1) return undefined;
+  return matches[0];
 }
 
 function findReconnectablePlayerByName(room: Room, name: string): Player | undefined {
@@ -370,6 +399,7 @@ export async function createRoom(
   const room: Room = {
     id,
     createdAt: Date.now(),
+    updatedAt: Date.now(),
     settings: {
       rounds: settings.rounds,
       maxPlayers: settings.maxPlayers,
@@ -388,6 +418,7 @@ export async function createRoom(
     secretWord: null,
     wordChoices: [],
     wordChoiceDeadline: null,
+    phaseDeadline: null,
     turnStartTime: null,
     turnEndTime: null,
     canvasActions: [],
@@ -483,7 +514,7 @@ export async function joinRoom(
     touchPlayer(room, playerId);
     result = { ok: true, room, reconnected: true, playerId };
   } else if (room.phase !== "waiting") {
-    const reclaim = findReconnectablePlayerByName(room, name);
+    const reclaim = findUniquePlayerByName(room, name);
     if (reclaim) {
       reclaim.name = name;
       reclaim.avatar = avatar;
@@ -763,6 +794,7 @@ async function startWordSelection(room: Room): Promise<void> {
   }
 
   room.wordChoiceDeadline = Date.now() + WORD_CHOICE_TIMEOUT_MS;
+  room.phaseDeadline = null;
 
   await broadcastRoomState(room.id);
   await persistRoom(room);
@@ -817,6 +849,7 @@ export async function pickWord(
   room.secretWord = chosen;
   room.usedWords.push(chosen.toLowerCase());
   room.phase = "drawing";
+  room.phaseDeadline = null;
   room.turnStartTime = Date.now();
   room.turnEndTime = Date.now() + room.settings.turnDuration * 1000;
   room.canvasActions = [];
@@ -950,6 +983,7 @@ export async function handleDrawStrokes(
     event: "draw_strokes",
     payload: { strokes: accepted },
   });
+  await persistRoom(room);
   return true;
 }
 
@@ -968,6 +1002,7 @@ export async function handleFill(
     event: "fill",
     payload: { action },
   });
+  await persistRoom(room);
   return true;
 }
 
@@ -985,6 +1020,7 @@ export async function handleUndo(
     event: "undo",
     payload: { actionId: removed.id },
   });
+  await persistRoom(room);
   return true;
 }
 
@@ -1145,19 +1181,18 @@ async function endTurn(roomId: string): Promise<void> {
   });
 
   room.phase = "turn_end";
+  room.phaseDeadline = Date.now() + 3000;
   room.currentTurnIndex++;
 
   await broadcastRoomState(roomId);
   await persistRoom(room);
-
-  setTimeout(async () => {
-    await advanceTurn(roomId);
-  }, 3000);
 }
 
 async function advanceTurn(roomId: string): Promise<void> {
-  const room = await ensureRoom(roomId);
+  const room = getRoom(roomId);
   if (!room || room.phase !== "turn_end") return;
+
+  room.phaseDeadline = null;
 
   if (room.currentTurnIndex >= room.playerOrder.length) {
     room.currentTurnIndex = 0;

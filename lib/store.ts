@@ -392,10 +392,24 @@ export async function tryReconnectRoom(
       clearPersistedSession();
       useGameStore.getState().clearSession();
     } else {
+      const current = useGameStore.getState().player;
       useGameStore.setState({
-        player: { id: stored.id, name: stored.name, avatar: stored.avatar },
+        player: current ?? {
+          id: stored.id,
+          name: stored.name,
+          avatar: stored.avatar,
+        },
         sessionToken: null,
         joinedRoomId: null,
+      });
+    }
+  } else {
+    const state = useGameStore.getState();
+    if (state.player && state.sessionToken && state.joinedRoomId) {
+      savePersistedSession({
+        ...state.player,
+        sessionToken: state.sessionToken,
+        joinedRoomId: state.joinedRoomId,
       });
     }
   }

@@ -89,6 +89,8 @@ export interface ReactionEvent {
 export interface Room {
   id: string;
   createdAt: number;
+  /** Bumped on every persist so instances can merge Redis vs memory safely. */
+  updatedAt: number;
   settings: RoomSettings;
   players: Map<string, Player>;
   playerOrder: string[];
@@ -99,6 +101,8 @@ export interface Room {
   secretWord: string | null;
   wordChoices: string[];
   wordChoiceDeadline: number | null;
+  /** When to auto-advance from turn_end → next word_select (serverless-safe). */
+  phaseDeadline: number | null;
   turnStartTime: number | null;
   turnEndTime: number | null;
   canvasActions: CanvasAction[];
