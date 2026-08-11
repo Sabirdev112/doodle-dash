@@ -3,6 +3,10 @@ import { getRoom, isPlayerInRoom } from "@/lib/rooms";
 import { getPusher, roomChannel } from "@/lib/realtime";
 import { requireSession } from "@/lib/apiAuth";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 30;
+
 async function parseChannelAuthBody(
   req: NextRequest
 ): Promise<{ socketId: string; channelName: string } | null> {

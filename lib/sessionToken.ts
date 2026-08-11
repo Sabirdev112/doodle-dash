@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "crypto";
+import { getServerEnv } from "./env";
 
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -9,11 +10,7 @@ export interface SessionClaims {
 }
 
 function getSecret(): string {
-  const secret = process.env.SESSION_SECRET ?? process.env.PUSHER_SECRET;
-  if (!secret) {
-    throw new Error("Missing SESSION_SECRET or PUSHER_SECRET");
-  }
-  return secret;
+  return getServerEnv().SESSION_SECRET;
 }
 
 export function createSessionToken(roomId: string, playerId: string): string {

@@ -6,6 +6,10 @@ import { sanitizePlayerName } from "@/lib/sanitize";
 import { isValidAvatar } from "@/lib/avatars";
 import { createSessionToken } from "@/lib/sessionToken";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 30;
+
 const createSchema = z.object({
   playerId: z.string().min(1).max(36),
   name: z.string().min(1).max(20),

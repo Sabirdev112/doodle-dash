@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getRoom } from "@/lib/rooms";
 import { checkStatusIpRateLimit } from "@/lib/rateLimit";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 30;
+
 function getClientIp(req: NextRequest): string {
   return (
     req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||

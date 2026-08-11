@@ -1,24 +1,17 @@
 import Pusher from "pusher";
 import type { RealtimeEvent } from "./types";
+import { getServerEnv } from "./env";
 
 let pusherInstance: Pusher | null = null;
 
 function getPusher(): Pusher {
   if (!pusherInstance) {
-    const appId = process.env.PUSHER_APP_ID;
-    const key = process.env.PUSHER_KEY;
-    const secret = process.env.PUSHER_SECRET;
-    const cluster = process.env.PUSHER_CLUSTER;
-
-    if (!appId || !key || !secret || !cluster) {
-      throw new Error("Missing Pusher environment variables");
-    }
-
+    const env = getServerEnv();
     pusherInstance = new Pusher({
-      appId,
-      key,
-      secret,
-      cluster,
+      appId: env.PUSHER_APP_ID,
+      key: env.PUSHER_KEY,
+      secret: env.PUSHER_SECRET,
+      cluster: env.PUSHER_CLUSTER,
       useTLS: true,
     });
   }

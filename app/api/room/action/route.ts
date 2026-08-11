@@ -32,6 +32,10 @@ import {
 import { REACTION_EMOJIS } from "@/lib/types";
 import { sanitizeGuess } from "@/lib/sanitize";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 30;
+
 function getClientIp(req: NextRequest): string {
   return (
     req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
