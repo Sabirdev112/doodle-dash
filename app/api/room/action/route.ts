@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
   disbandRoom,
+  ensureRoom,
   getRoom,
   getRoomSnapshot,
   handleDrawStrokes,
@@ -12,6 +13,7 @@ import {
   leaveRoom,
   pickWord,
   resyncRoom,
+  saveRoomState,
   startGame,
   updateRoomSettings,
   handleReaction,
@@ -152,7 +154,7 @@ export async function POST(req: NextRequest) {
     }
     const playerId = session.playerId;
 
-    const room = getRoom(action.roomId);
+    const room = await ensureRoom(action.roomId);
     if (!room) {
       return NextResponse.json({ error: "Room not found" }, { status: 404 });
     }
@@ -161,13 +163,14 @@ export async function POST(req: NextRequest) {
     }
 
     if (action.type !== "leave") {
-      touchPlayerActivity(action.roomId, playerId);
+      await touchPlayerActivity(action.roomId, playerId);
     }
 
     switch (action.type) {
       case "start_game": {
         const ok = await startGame(action.roomId, playerId);
         if (!ok) return NextResponse.json({ ok: false });
+        await saveRoomState(action.roomId);
         const updatedRoom = getRoom(action.roomId);
         return NextResponse.json({
           ok: true,
@@ -184,11 +187,13 @@ export async function POST(req: NextRequest) {
         if (!result.ok) {
           return NextResponse.json({ error: result.error }, { status: 400 });
         }
+        await saveRoomState(roomId);
         return NextResponse.json({ ok: true, settings: result.settings });
       }
       case "pick_word": {
         const ok = await pickWord(action.roomId, playerId, action.word);
         if (!ok) return NextResponse.json({ ok: false });
+        await saveRoomState(action.roomId);
         const updatedRoom = getRoom(action.roomId);
         return NextResponse.json({
           ok: true,
@@ -200,6 +205,7 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ ok: false, dropped: true });
         }
         const ok = await handleDrawStrokes(action.roomId, playerId, action.strokes);
+        if (ok) await saveRoomState(action.roomId);
         return NextResponse.json({ ok });
       }
       case "fill": {
@@ -207,6 +213,7 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ ok: false, dropped: true });
         }
         const ok = await handleFill(action.roomId, playerId, action.action);
+        if (ok) await saveRoomState(action.roomId);
         return NextResponse.json({ ok });
       }
       case "undo": {
@@ -214,6 +221,7 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ ok: false, dropped: true });
         }
         const ok = await handleUndo(action.roomId, playerId);
+        if (ok) await saveRoomState(action.roomId);
         return NextResponse.json({ ok });
       }
       case "guess": {
@@ -223,6 +231,7 @@ export async function POST(req: NextRequest) {
         const text = sanitizeGuess(action.text);
         if (!text) return NextResponse.json({ ok: false });
         const ok = await handleGuess(action.roomId, playerId, text);
+        if (ok) await saveRoomState(action.roomId);
         return NextResponse.json({ ok });
       }
       case "resync": {
@@ -236,7 +245,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
       case "leave": {
-        leaveRoom(action.roomId, playerId);
+        await leaveRoom(action.roomId, playerId);
         return NextResponse.json({ ok: true });
       }
       case "reaction": {
@@ -244,14 +253,17 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ ok: false, dropped: true });
         }
         const ok = await handleReaction(action.roomId, playerId, action.emoji);
+        if (ok) await saveRoomState(action.roomId);
         return NextResponse.json({ ok });
       }
       case "mute_player": {
         const ok = await handleMutePlayer(action.roomId, playerId, action.targetId);
+        if (ok) await saveRoomState(action.roomId);
         return NextResponse.json({ ok });
       }
       case "kick_player": {
         const ok = await handleKickPlayer(action.roomId, playerId, action.targetId);
+        if (ok) await saveRoomState(action.roomId);
         return NextResponse.json({ ok });
       }
       default:

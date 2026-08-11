@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid name" }, { status: 400 });
     }
 
-    const room = createRoom(
+    const room = await createRoom(
       {
         rounds,
         maxPlayers,

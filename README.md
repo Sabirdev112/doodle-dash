@@ -30,14 +30,11 @@ This project uses **Pusher Channels' free tier** instead of a self-hosted WebSoc
 
 ## Design Decisions & Tradeoffs
 
-**In-memory game state only.** Rooms live in a server-side `Map` — no database, Redis, or KV store. This keeps hosting free and the codebase simple, but:
+**Room state: Redis on Vercel, in-memory locally.** On Vercel, serverless functions can run on many instances at once — a plain in-memory `Map` means players in the same room may hit different servers and not see each other. **Production deploys should set Upstash Redis** (`KV_REST_API_URL` + `KV_REST_API_TOKEN`) so every instance reads/writes the same room. Local dev works without Redis (single Node process).
 
-- State is lost when a serverless instance cold-starts or after a redeploy
-- Under heavy traffic, Vercel may spin up multiple instances — rooms created on one instance may not be visible on another until traffic settles
+**Browser session persistence.** Your player id, name, avatar, and session token are saved in `localStorage` so refresh or reopening the invite link can reconnect you to the same seat when the room still exists.
 
-Fine for casual party games with friends; not suitable for persistent leaderboards or high-traffic production.
-
-**No auth or persistence by design.** Every visit is a fresh player unless they refresh (session is saved in the browser). Names, scores, and room data exist only for the lifetime of an active room (max 2 hours TTL).
+**No accounts.** Names, scores, and room data exist only for the lifetime of an active room (max 2 hours TTL).
 
 ## Getting Started (Local)
 
@@ -105,9 +102,8 @@ Verify config: [http://localhost:3000/api/health](http://localhost:3000/api/heal
 | **GitHub repo** | Push this project to GitHub |
 | **Vercel account** | Free tier works — [vercel.com](https://vercel.com) |
 | **Pusher Channels app** | Free tier (~200k messages/day) — [pusher.com](https://pusher.com) |
-| **7 env vars** | Listed below — add in Vercel project settings |
-
-No database, Redis, or paid services required.
+| **Upstash Redis** | Free tier — [console.upstash.com](https://console.upstash.com) (required for reliable multiplayer on Vercel) |
+| **9 env vars** | Listed below — add in Vercel project settings |
 
 ### Step-by-step
 
@@ -139,13 +135,16 @@ No database, Redis, or paid services required.
    | `NEXT_PUBLIC_PUSHER_KEY` | Same as `PUSHER_KEY` | No |
    | `NEXT_PUBLIC_PUSHER_CLUSTER` | Same as `PUSHER_CLUSTER` | No |
    | `SESSION_SECRET` | Random 32+ char string | Yes |
+   | `KV_REST_API_URL` | Upstash REST URL | Yes |
+   | `KV_REST_API_TOKEN` | Upstash REST token | Yes |
 
 4. **Deploy**
    - Click **Deploy**
    - Wait for the build to finish
 
 5. **Verify**
-   - Visit `https://your-app.vercel.app/api/health` → should show `{ "ok": true }`
+   - Visit `https://your-app.vercel.app/api/health` → should show `{ "ok": true, "persistence": "redis" }`
+   - If `"persistence": "memory"`, Redis env vars are missing — players may not see each other until refresh
    - Open the app, create a room, open the invite link in another browser/tab
    - Draw and guess to confirm Pusher realtime works
 
@@ -170,7 +169,7 @@ In your Pusher app settings, confirm:
 ### After deploy
 
 - Share your Vercel URL — room invite links use the current domain automatically
-- Redeploying clears all active rooms (in-memory state)
+- Redeploying clears in-memory caches; Redis-backed rooms survive across instances (still subject to 2h TTL)
 - Free Pusher tier limits: ~200k messages/day, 100 concurrent connections
 
 ### Troubleshooting
@@ -178,7 +177,9 @@ In your Pusher app settings, confirm:
 | Problem | Fix |
 |---------|-----|
 | Health check returns 503 | Missing or mismatched env vars in Vercel |
-| "Room not found" right after create | Cold start / multi-instance — retry; pin one region in `vercel.json` |
+| "Room not found" right after create | Redis not configured — add `KV_REST_API_*` and redeploy; check `/api/health` |
+| Players only appear after refresh | Same as above; lobby also polls every 8s as a fallback |
+| Kicked on refresh / expired invite | Should auto-reconnect via saved session; ensure Redis + `SESSION_SECRET` are set |
 | Drawing not syncing | Check Pusher credentials; open browser console for Pusher errors |
 | Can't subscribe to channel | Ensure `SESSION_SECRET` is set and `/api/pusher/auth` returns 200 |
 

@@ -7,19 +7,43 @@ export interface PersistedSession extends SessionPlayer {
   joinedRoomId: string;
 }
 
-export function savePersistedSession(session: PersistedSession): void {
-  if (typeof window === "undefined") return;
+function readStorage(): Storage | null {
+  if (typeof window === "undefined") return null;
   try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function savePersistedSession(session: PersistedSession): void {
+  const storage = readStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(STORAGE_KEY, JSON.stringify(session));
   } catch {
     /* ignore quota / private mode */
   }
 }
 
 export function loadPersistedSession(): PersistedSession | null {
-  if (typeof window === "undefined") return null;
+  const storage = readStorage();
+  if (!storage) return null;
+
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
+    if (typeof window !== "undefined") {
+      const legacy = window.sessionStorage.getItem(STORAGE_KEY);
+      if (legacy) {
+        window.sessionStorage.removeItem(STORAGE_KEY);
+        storage.setItem(STORAGE_KEY, legacy);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    const raw = storage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<PersistedSession>;
     if (
@@ -38,9 +62,10 @@ export function loadPersistedSession(): PersistedSession | null {
 }
 
 export function clearPersistedSession(): void {
-  if (typeof window === "undefined") return;
+  const storage = readStorage();
+  if (!storage) return;
   try {
-    sessionStorage.removeItem(STORAGE_KEY);
+    storage.removeItem(STORAGE_KEY);
   } catch {
     /* ignore */
   }

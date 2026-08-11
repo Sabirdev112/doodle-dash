@@ -34,6 +34,12 @@ import {
   PLAYER_RECONNECT_GRACE_MS,
 } from "./types";
 import { buildWordPool, DEFAULT_WORDS } from "./words";
+import {
+  deletePersistedRoom,
+  isRoomPersistenceEnabled,
+  loadPersistedRoom,
+  savePersistedRoom,
+} from "./roomPersistence";
 
 const generateRoomId = customAlphabet(
   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
@@ -74,14 +80,127 @@ function clearRoomTimers(room: Room): void {
   room.hintTimer = null;
 }
 
+async function persistRoom(room: Room): Promise<void> {
+  rooms.set(room.id, room);
+  await savePersistedRoom(room);
+}
+
+export async function saveRoomState(roomId: string): Promise<void> {
+  const room = getRoom(roomId);
+  if (room) await persistRoom(room);
+}
+
+function rescheduleTimers(room: Room): void {
+  clearRoomTimers(room);
+
+  if (
+    room.phase === "word_select" &&
+    room.wordChoiceDeadline &&
+    room.drawerId &&
+    room.wordChoices.length > 0
+  ) {
+    const remaining = room.wordChoiceDeadline - Date.now();
+    const drawerId = room.drawerId;
+    const fallbackWord = room.wordChoices[0];
+    if (remaining > 0) {
+      room.wordChoiceTimer = setTimeout(() => {
+        void pickWord(room.id, drawerId, fallbackWord);
+      }, remaining);
+    }
+  }
+
+  if (room.phase === "drawing" && room.turnEndTime) {
+    const remaining = room.turnEndTime - Date.now();
+    if (remaining > 0) {
+      room.turnTimer = setTimeout(() => {
+        void endTurn(room.id);
+      }, remaining);
+      if (room.settings.hintsEnabled && room.secretWord) {
+        startHintTimer(room);
+      }
+    }
+  }
+}
+
+async function processDeadlines(room: Room): Promise<void> {
+  const now = Date.now();
+
+  if (
+    room.phase === "word_select" &&
+    room.wordChoiceDeadline &&
+    now >= room.wordChoiceDeadline &&
+    room.drawerId &&
+    room.wordChoices.length > 0
+  ) {
+    await pickWord(room.id, room.drawerId, room.wordChoices[0]);
+    return;
+  }
+
+  if (room.phase === "drawing" && room.turnEndTime && now >= room.turnEndTime) {
+    await endTurn(room.id);
+  }
+}
+
+export async function ensureRoom(roomId: string): Promise<Room | undefined> {
+  if (isRoomPersistenceEnabled()) {
+    const persisted = await loadPersistedRoom(roomId);
+    if (!persisted) {
+      const existing = rooms.get(roomId);
+      if (existing) clearRoomTimers(existing);
+      rooms.delete(roomId);
+      return undefined;
+    }
+
+    const existing = rooms.get(roomId);
+    if (existing) clearRoomTimers(existing);
+
+    rooms.set(roomId, persisted);
+    rescheduleTimers(persisted);
+
+    if (Date.now() - persisted.createdAt > ROOM_TTL_MS) {
+      clearRoomTimers(persisted);
+      rooms.delete(roomId);
+      await deletePersistedRoom(roomId);
+      return undefined;
+    }
+
+    await processDeadlines(persisted);
+    return rooms.get(roomId);
+  }
+
+  let room = rooms.get(roomId);
+  if (!room) return undefined;
+
+  if (Date.now() - room.createdAt > ROOM_TTL_MS) {
+    clearRoomTimers(room);
+    rooms.delete(roomId);
+    return undefined;
+  }
+
+  await processDeadlines(room);
+  return rooms.get(roomId);
+}
+
+async function removeRoom(roomId: string): Promise<void> {
+  const room = rooms.get(roomId);
+  if (room) clearRoomTimers(room);
+  rooms.delete(roomId);
+  await deletePersistedRoom(roomId);
+}
+
 function touchPlayer(room: Room, playerId: string): void {
   const player = room.players.get(playerId);
   if (player) player.lastSeenAt = Date.now();
 }
 
-export function touchPlayerActivity(roomId: string, playerId: string): void {
-  const room = rooms.get(roomId);
-  if (room) touchPlayer(room, playerId);
+export async function touchPlayerActivity(
+  roomId: string,
+  playerId: string
+): Promise<void> {
+  const room = await ensureRoom(roomId);
+  if (!room) return;
+  touchPlayer(room, playerId);
+  await persistRoom(room);
 }
 
 function pruneInactivePlayers(room: Room): void {
@@ -229,7 +348,7 @@ function updateCrown(room: Room): void {
   room.crownHolderId = newCrown;
 }
 
-export function createRoom(
+export async function createRoom(
   settings: Omit<RoomSettings, "customWords"> & {
     customWords?: string | string[];
     hintsEnabled?: boolean;
@@ -238,7 +357,7 @@ export function createRoom(
   ownerId: string,
   ownerName: string,
   ownerAvatar: string
-): Room {
+): Promise<Room> {
   const id = generateRoomId();
   const customWords = settings.customWords
     ? sanitizeCustomWords(
@@ -289,7 +408,7 @@ export function createRoom(
   };
 
   addPlayerToRoom(room, ownerId, ownerName, ownerAvatar, true);
-  rooms.set(id, room);
+  await persistRoom(room);
   return room;
 }
 
@@ -335,15 +454,17 @@ export function isPlayerInRoom(room: Room, playerId: string): boolean {
   return room.players.has(playerId);
 }
 
-export function joinRoom(
+export async function joinRoom(
   roomId: string,
   playerId: string,
   name: string,
   avatar: string
 ):
-  | { ok: true; room: Room; reconnected: boolean; playerId: string }
-  | { ok: false; error: string } {
-  const room = getRoom(roomId);
+  | Promise<
+      | { ok: true; room: Room; reconnected: boolean; playerId: string }
+      | { ok: false; error: string }
+    > {
+  const room = await ensureRoom(roomId);
   if (!room) return { ok: false, error: "Room not found or expired" };
 
   pruneInactivePlayers(room);
@@ -351,66 +472,58 @@ export function joinRoom(
     return { ok: false, error: "Room not found or expired" };
   }
 
+  let result:
+    | { ok: true; room: Room; reconnected: boolean; playerId: string }
+    | { ok: false; error: string };
+
   if (room.players.has(playerId)) {
     const existing = room.players.get(playerId)!;
     existing.name = name;
     existing.avatar = avatar;
     touchPlayer(room, playerId);
-    return { ok: true, room, reconnected: true, playerId };
-  }
-
-  if (room.phase !== "waiting") {
+    result = { ok: true, room, reconnected: true, playerId };
+  } else if (room.phase !== "waiting") {
     const reclaim = findReconnectablePlayerByName(room, name);
     if (reclaim) {
       reclaim.name = name;
       reclaim.avatar = avatar;
       touchPlayer(room, reclaim.id);
-      void triggerRoomEvent(roomId, {
-        event: "player_joined",
-        payload: { player: toPublicPlayer(room, reclaim) },
-      });
-      return { ok: true, room, reconnected: true, playerId: reclaim.id };
+      result = { ok: true, room, reconnected: true, playerId: reclaim.id };
+    } else {
+      result = {
+        ok: false,
+        error:
+          "Game already in progress — use the same name you played with to rejoin.",
+      };
     }
-    return {
-      ok: false,
-      error:
-        "Game already in progress — use the same name you played with to rejoin.",
-    };
+  } else {
+    const reclaim = findReconnectablePlayerByName(room, name);
+    if (reclaim) {
+      reclaim.name = name;
+      reclaim.avatar = avatar;
+      touchPlayer(room, reclaim.id);
+      result = { ok: true, room, reconnected: true, playerId: reclaim.id };
+    } else if (room.players.size >= room.settings.maxPlayers) {
+      result = { ok: false, error: "Room is full" };
+    } else if (isNameTaken(room, name)) {
+      result = { ok: false, error: "That name is taken — pick another." };
+    } else {
+      addPlayerToRoom(room, playerId, name, avatar, false);
+      result = { ok: true, room, reconnected: false, playerId };
+    }
   }
 
-  const reclaim = findReconnectablePlayerByName(room, name);
-  if (reclaim) {
-    reclaim.name = name;
-    reclaim.avatar = avatar;
-    touchPlayer(room, reclaim.id);
-    void triggerRoomEvent(roomId, {
-      event: "player_joined",
-      payload: { player: toPublicPlayer(room, reclaim) },
-    });
-    return { ok: true, room, reconnected: true, playerId: reclaim.id };
-  }
+  if (!result.ok) return result;
 
-  if (room.players.size >= room.settings.maxPlayers) {
-    return { ok: false, error: "Room is full" };
-  }
-
-  if (isNameTaken(room, name)) {
-    return { ok: false, error: "That name is taken — pick another." };
-  }
-
-  const player = addPlayerToRoom(room, playerId, name, avatar, false);
-  void triggerRoomEvent(roomId, {
-    event: "player_joined",
-    payload: { player: toPublicPlayer(room, player) },
-  });
-
-  return { ok: true, room, reconnected: false, playerId };
+  await persistRoom(result.room);
+  await broadcastRoomState(roomId);
+  return result;
 }
 
-export function leaveRoom(
+export async function leaveRoom(
   roomId: string,
   playerId: string
-): { disbanded: boolean } {
+): Promise<{ disbanded: boolean }> {
   const room = getRoom(roomId);
   if (!room) return { disbanded: true };
 
@@ -423,8 +536,7 @@ export function leaveRoom(
   room.playerOrder = room.playerOrder.filter((id) => id !== playerId);
 
   if (room.players.size === 0) {
-    clearRoomTimers(room);
-    rooms.delete(roomId);
+    await removeRoom(roomId);
     return { disbanded: true };
   }
 
@@ -455,6 +567,7 @@ export function leaveRoom(
     void advanceAfterDrawerRemoved(room);
   }
 
+  await persistRoom(room);
   return { disbanded: false };
 }
 
@@ -522,7 +635,7 @@ export async function disbandRoom(
     event: "room_disbanded",
     payload: {},
   });
-  rooms.delete(roomId);
+  await removeRoom(roomId);
   return true;
 }
 
@@ -652,6 +765,7 @@ async function startWordSelection(room: Room): Promise<void> {
   room.wordChoiceDeadline = Date.now() + WORD_CHOICE_TIMEOUT_MS;
 
   await broadcastRoomState(room.id);
+  await persistRoom(room);
 
   if (room.wordChoiceTimer) clearTimeout(room.wordChoiceTimer);
   room.wordChoiceTimer = setTimeout(() => {
@@ -677,6 +791,7 @@ export async function startGame(
   room.drawerId = room.playerOrder[room.currentTurnIndex];
 
   await startWordSelection(room);
+  await persistRoom(room);
   return true;
 }
 
@@ -740,6 +855,7 @@ export async function pickWord(
   }
 
   await broadcastRoomState(roomId);
+  await persistRoom(room);
   return true;
 }
 
@@ -1032,6 +1148,7 @@ async function endTurn(roomId: string): Promise<void> {
   room.currentTurnIndex++;
 
   await broadcastRoomState(roomId);
+  await persistRoom(room);
 
   setTimeout(async () => {
     await advanceTurn(roomId);
@@ -1039,7 +1156,7 @@ async function endTurn(roomId: string): Promise<void> {
 }
 
 async function advanceTurn(roomId: string): Promise<void> {
-  const room = getRoom(roomId);
+  const room = await ensureRoom(roomId);
   if (!room || room.phase !== "turn_end") return;
 
   if (room.currentTurnIndex >= room.playerOrder.length) {
@@ -1049,6 +1166,7 @@ async function advanceTurn(roomId: string): Promise<void> {
     if (room.currentRound > room.settings.rounds) {
       room.phase = "ended";
       await broadcastRoomState(roomId);
+      await persistRoom(room);
       return;
     }
 
@@ -1066,16 +1184,18 @@ async function advanceTurn(roomId: string): Promise<void> {
 
   room.drawerId = room.playerOrder[room.currentTurnIndex];
   await startWordSelection(room);
+  await persistRoom(room);
 }
 
 export async function resyncRoom(
   roomId: string,
   playerId: string
 ): Promise<RoomSnapshot | null> {
-  const room = getRoom(roomId);
+  const room = await ensureRoom(roomId);
   if (!room || !room.players.has(playerId)) return null;
 
   touchPlayer(room, playerId);
+  await persistRoom(room);
   return getRoomSnapshot(room, playerId);
 }
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRoom } from "@/lib/rooms";
+import { ensureRoom } from "@/lib/rooms";
 import { checkStatusIpRateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
@@ -25,5 +25,5 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ exists: false });
   }
 
-  return NextResponse.json({ exists: Boolean(getRoom(roomId)) });
+  return NextResponse.json({ exists: Boolean(await ensureRoom(roomId)) });
 }

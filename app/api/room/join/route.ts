@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid name" }, { status: 400 });
     }
 
-    const result = joinRoom(roomId, playerId, sanitizedName, avatar);
+    const result = await joinRoom(roomId, playerId, sanitizedName, avatar);
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 400 });
     }
@@ -72,9 +72,7 @@ export async function POST(req: NextRequest) {
       phase: result.room.phase,
       players: getPlayersList(result.room),
       reconnected: result.reconnected,
-      snapshot: result.reconnected
-        ? getRoomSnapshot(result.room, effectivePlayerId)
-        : undefined,
+      snapshot: getRoomSnapshot(result.room, effectivePlayerId),
     });
   } catch {
     return NextResponse.json({ error: "Server error" }, { status: 500 });

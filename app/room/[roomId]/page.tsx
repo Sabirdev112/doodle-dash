@@ -30,13 +30,15 @@ import TurnOverlay from "@/components/TurnOverlay";
 
 import WaitingRoom from "@/components/WaitingRoom";
 
-import { tryReconnectRoom, useGameStore } from "@/lib/store";
+import { tryReconnectRoom, requestRoomResync, useGameStore } from "@/lib/store";
 
 import ButtonSpinner from "@/components/ButtonSpinner";
 
 import { usePusher } from "@/lib/usePusher";
 
 import { checkRoomExists } from "@/lib/roomInvite";
+
+import { loadPersistedSession } from "@/lib/persistedSession";
 
 
 
@@ -105,17 +107,24 @@ export default function RoomPage({
 
   usePusher(inLobby ? roomId : "", player?.id ?? "", sessionToken ?? "");
 
-
+  useEffect(() => {
+    if (!inLobby || phase !== "waiting") return;
+    const interval = window.setInterval(() => {
+      void requestRoomResync(roomId);
+    }, 8000);
+    return () => window.clearInterval(interval);
+  }, [inLobby, phase, roomId]);
 
   useEffect(() => {
     if (gateChecked.current) return;
     gateChecked.current = true;
 
     const gate = async () => {
-      const { player: currentPlayer, joinedRoomId: currentRoomId } =
+      const { player: currentPlayer, joinedRoomId: currentRoomId, applySnapshot } =
         useGameStore.getState();
 
       if (currentPlayer && currentRoomId === roomId) {
+        await requestRoomResync(roomId);
         setBooting(false);
         return;
       }
@@ -124,14 +133,33 @@ export default function RoomPage({
       if (reconnect.ok) {
         if (reconnect.data.snapshot) {
           applyRoomSnapshot(reconnect.data.snapshot as never);
+        } else {
+          applySnapshot({
+            settings: reconnect.data.settings as never,
+            phase: reconnect.data.phase as never,
+            players: (reconnect.data.players as never) ?? [],
+          });
         }
+        await requestRoomResync(roomId);
         setBooting(false);
+        return;
+      }
+
+      const exists = await checkRoomExists(roomId);
+      const stored = loadPersistedSession();
+      if (exists && stored?.joinedRoomId === roomId) {
+        useGameStore.setState({
+          player: { id: stored.id, name: stored.name, avatar: stored.avatar },
+          sessionToken: null,
+          joinedRoomId: null,
+        });
+        setRedirecting(true);
+        router.replace(`/?room=${roomId}`);
         return;
       }
 
       useGameStore.getState().clearSession();
       setRedirecting(true);
-      const exists = await checkRoomExists(roomId);
       router.replace(exists ? `/?room=${roomId}` : "/?expired=1");
     };
 

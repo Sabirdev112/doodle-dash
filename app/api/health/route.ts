@@ -12,6 +12,9 @@ export async function GET() {
       ok: true,
       service: "doodle-dash",
       realtime: "pusher",
+      persistence: process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL
+        ? "redis"
+        : "memory",
     });
   } catch (error) {
     const message =

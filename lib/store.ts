@@ -357,6 +357,18 @@ export async function apiJoinRoom(
   return { ok: true, data };
 }
 
+export async function requestRoomResync(roomId: string): Promise<void> {
+  try {
+    const res = await sendAction({ type: "resync", roomId });
+    const data = (await res.json()) as { ok?: boolean; snapshot?: RoomSnapshot };
+    if (res.ok && data.ok && data.snapshot) {
+      useGameStore.getState().applyRoomSnapshot(data.snapshot);
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
 export async function tryReconnectRoom(
   roomId: string
 ): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; error: string }> {
@@ -374,8 +386,18 @@ export async function tryReconnectRoom(
   const player = { id: stored.id, name: stored.name, avatar: stored.avatar };
   const result = await apiJoinRoom(roomId, player);
   if (!result.ok) {
-    clearPersistedSession();
-    useGameStore.getState().clearSession();
+    const { checkRoomExists } = await import("@/lib/roomInvite");
+    const exists = await checkRoomExists(roomId);
+    if (!exists) {
+      clearPersistedSession();
+      useGameStore.getState().clearSession();
+    } else {
+      useGameStore.setState({
+        player: { id: stored.id, name: stored.name, avatar: stored.avatar },
+        sessionToken: null,
+        joinedRoomId: null,
+      });
+    }
   }
   return result;
 }

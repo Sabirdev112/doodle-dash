@@ -12,6 +12,7 @@ import {
 import { DEFAULT_ROOM_CREATE_OPTIONS, type RoomSnapshot } from "@/lib/types";
 import { sanitizePlayerName } from "@/lib/sanitize";
 import { checkRoomExists, isExpiredRoomError } from "@/lib/roomInvite";
+import { loadPersistedSession } from "@/lib/persistedSession";
 
 const freshAvatar = () => DEFAULT_CHARACTER;
 
@@ -59,6 +60,14 @@ function LandingContent() {
           router.replace(`/room/${inviteRoomId}`);
           return;
         }
+
+        const stored = loadPersistedSession();
+        if (stored?.joinedRoomId === inviteRoomId) {
+          setName(stored.name);
+          setAvatar(stored.avatar);
+        }
+        setReady(true);
+        return;
       }
 
       const { joinedRoomId } = useGameStore.getState();
@@ -97,7 +106,22 @@ function LandingContent() {
       setError("Choose an avatar!");
       return false;
     }
-    initPlayer(sanitized, avatar);
+
+    const stored =
+      inviteRoomId && loadPersistedSession()?.joinedRoomId === inviteRoomId
+        ? loadPersistedSession()
+        : null;
+    if (stored && stored.name.trim().toLowerCase() === sanitized.toLowerCase()) {
+      useGameStore.setState({
+        player: {
+          id: stored.id,
+          name: sanitized,
+          avatar,
+        },
+      });
+    } else {
+      initPlayer(sanitized, avatar);
+    }
     setError("");
     return true;
   };

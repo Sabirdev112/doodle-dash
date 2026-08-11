@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRoom, isPlayerInRoom } from "@/lib/rooms";
+import { ensureRoom, isPlayerInRoom } from "@/lib/rooms";
 import { getPusher, roomChannel } from "@/lib/realtime";
 import { requireSession } from "@/lib/apiAuth";
 
@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     }
 
     const roomId = match[1];
-    const room = getRoom(roomId);
+    const room = await ensureRoom(roomId);
     if (!room) {
       return NextResponse.json({ error: "Room not found" }, { status: 403 });
     }
