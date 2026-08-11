@@ -1,16 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRoom, isPlayerInRoom } from "@/lib/rooms";
 import { getPusher, roomChannel } from "@/lib/realtime";
+import { requireSession } from "@/lib/apiAuth";
+
+async function parseChannelAuthBody(
+  req: NextRequest
+): Promise<{ socketId: string; channelName: string } | null> {
+  const contentType = req.headers.get("content-type") ?? "";
+
+  if (contentType.includes("application/json")) {
+    const body = (await req.json()) as Record<string, string>;
+    const socketId = body.socket_id;
+    const channelName = body.channel_name;
+    if (!socketId || !channelName) return null;
+    return { socketId, channelName };
+  }
+
+  const form = await req.formData();
+  const socketId = form.get("socket_id")?.toString();
+  const channelName = form.get("channel_name")?.toString();
+  if (!socketId || !channelName) return null;
+  return { socketId, channelName };
+}
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const socketId = body.socket_id as string;
-    const channelName = body.channel_name as string;
-
-    if (!socketId || !channelName) {
+    const parsed = await parseChannelAuthBody(req);
+    if (!parsed) {
       return NextResponse.json({ error: "Missing params" }, { status: 400 });
     }
+
+    const { socketId, channelName } = parsed;
 
     const match = channelName.match(/^private-room-(.+)$/);
     if (!match) {
@@ -23,8 +43,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Room not found" }, { status: 403 });
     }
 
-    const playerId = req.headers.get("x-player-id");
-    if (!playerId || !isPlayerInRoom(room, playerId)) {
+    const session = requireSession(req, roomId);
+    if (!session || !isPlayerInRoom(room, session.playerId)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 

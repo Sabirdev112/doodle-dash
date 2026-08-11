@@ -52,6 +52,26 @@ export function checkGuessRateLimit(playerId: string): boolean {
   return checkRateLimit(`guess:${playerId}`, 5, 5, 1);
 }
 
+export function checkGuessCooldown(playerId: string): boolean {
+  return checkRateLimit(`guess-cd:${playerId}`, 1, 1.25, 1);
+}
+
+export function checkResyncRateLimit(playerId: string): boolean {
+  return checkRateLimit(`resync:${playerId}`, 12, 0.2, 1);
+}
+
+export function checkUndoRateLimit(playerId: string): boolean {
+  return checkRateLimit(`undo:${playerId}`, 8, 4, 1);
+}
+
+export function checkActionIpRateLimit(ip: string): boolean {
+  return checkIpRateLimit(ip, "action", 120);
+}
+
+export function checkStatusIpRateLimit(ip: string): boolean {
+  return checkIpRateLimit(ip, "status", 30);
+}
+
 export function cleanupRateLimits(): void {
   const now = Date.now();
   for (const [key, entry] of buckets) {

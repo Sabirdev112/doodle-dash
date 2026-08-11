@@ -1,12 +1,26 @@
 export type GamePhase = "waiting" | "word_select" | "drawing" | "turn_end" | "ended";
+export type WordMode = "normal" | "hidden";
+export type TurnDuration = 60 | 90 | 120 | 150;
 
 export interface RoomSettings {
   rounds: number;
   maxPlayers: number;
-  wordChoiceCount: number;
-  turnDuration: 60 | 90 | 120 | 150;
+  wordChoiceCount: 3 | 4 | 5;
+  turnDuration: TurnDuration;
   customWords: string[];
+  hintsEnabled: boolean;
+  wordMode: WordMode;
 }
+
+/** Default options used for quick-create and as the /create form starting values. */
+export const DEFAULT_ROOM_CREATE_OPTIONS = {
+  rounds: 3,
+  maxPlayers: 8,
+  wordChoiceCount: 3 as const,
+  turnDuration: 90 as TurnDuration,
+  hintsEnabled: true,
+  wordMode: "normal" as WordMode,
+};
 
 export interface Player {
   id: string;
@@ -14,8 +28,10 @@ export interface Player {
   avatar: string;
   score: number;
   joinedAt: number;
+  lastSeenAt: number;
   isOwner: boolean;
   hasGuessedCorrectly: boolean;
+  isMuted: boolean;
   crownReachedAt?: number;
 }
 
@@ -31,6 +47,8 @@ export interface StrokeAction {
   size: number;
   points: Point[];
   isEraser: boolean;
+  /** Pencil strokes use partial opacity; pen defaults to 1. */
+  opacity?: number;
 }
 
 export interface FillAction {
@@ -43,13 +61,28 @@ export interface FillAction {
 
 export type CanvasAction = StrokeAction | FillAction;
 
+export type ChatMessageKind =
+  | "guess"
+  | "correct"
+  | "close"
+  | "system"
+  | "chat";
+
 export interface ChatMessage {
   id: string;
   playerId: string;
   playerName: string;
   avatar: string;
   text: string;
-  kind: "guess" | "correct" | "close" | "system" | "chat";
+  kind: ChatMessageKind;
+  timestamp: number;
+}
+
+export interface ReactionEvent {
+  id: string;
+  playerId: string;
+  playerName: string;
+  emoji: string;
   timestamp: number;
 }
 
@@ -72,9 +105,19 @@ export interface Room {
   correctGuessers: string[];
   chatMessages: ChatMessage[];
   crownHolderId: string | null;
+  wordPool: string[];
+  usedWords: string[];
+  /** Which letter indices are revealed for hints (same length as secret word). */
+  hintRevealed: boolean[];
+  drawingStarted: boolean;
+  lastGuessTime: number | null;
+  /** Points earned on the last completed turn (shown in turn-end overlay). */
+  lastTurnPointAwards: TurnPointAward[];
   turnTimer: ReturnType<typeof setTimeout> | null;
   wordChoiceTimer: ReturnType<typeof setTimeout> | null;
-  wordPool: string[];
+  hintTimer: ReturnType<typeof setInterval> | null;
+  votekickTargetId: string | null;
+  votekickVotes: Set<string>;
 }
 
 export interface PublicPlayer {
@@ -86,6 +129,14 @@ export interface PublicPlayer {
   hasGuessedCorrectly: boolean;
   isDrawer: boolean;
   hasCrown: boolean;
+  isMuted: boolean;
+}
+
+export interface TurnPointAward {
+  playerId: string;
+  name: string;
+  avatar: string;
+  points: number;
 }
 
 export interface RoomSnapshot {
@@ -97,47 +148,22 @@ export interface RoomSnapshot {
   totalRounds: number;
   drawerId: string | null;
   wordLength: number;
+  wordDisplay: string;
   secretWord?: string;
   wordChoices?: string[];
   wordChoiceDeadline?: number;
   turnEndTime: number | null;
   turnStartTime: number | null;
-  canvasActions: CanvasAction[];
-  chatMessages: ChatMessage[];
+  /** Omitted from lightweight Pusher broadcasts — use resync or stroke events. */
+  canvasActions?: CanvasAction[];
+  /** Omitted from lightweight Pusher broadcasts — use resync or guess events. */
+  chatMessages?: ChatMessage[];
   correctGuessers: string[];
+  drawingStarted: boolean;
   revealedWord?: string;
+  turnPointAwards?: TurnPointAward[];
   finalStandings?: PublicPlayer[];
 }
-
-export type ClientAction =
-  | { type: "start_game" }
-  | { type: "disband_room" }
-  | { type: "pick_word"; word: string }
-  | { type: "draw_strokes"; strokes: StrokeAction[] }
-  | { type: "fill"; action: FillAction }
-  | { type: "undo" }
-  | { type: "guess"; text: string }
-  | { type: "resync" }
-  | { type: "leave" };
-
-export type RealtimeEvent =
-  | { event: "player_joined"; payload: { player: PublicPlayer } }
-  | { event: "player_left"; payload: { playerId: string; newOwnerId?: string } }
-  | { event: "owner_changed"; payload: { newOwnerId: string } }
-  | { event: "room_disbanded"; payload: Record<string, never> }
-  | { event: "game_started"; payload: { currentRound: number } }
-  | { event: "word_choices"; payload: { drawerId: string; deadline: number } }
-  | { event: "turn_started"; payload: { drawerId: string; wordLength: number; turnEndTime: number } }
-  | { event: "draw_strokes"; payload: { strokes: StrokeAction[] } }
-  | { event: "fill"; payload: { action: FillAction } }
-  | { event: "undo"; payload: { actionId: string } }
-  | { event: "canvas_cleared"; payload: Record<string, never> }
-  | { event: "guess_result"; payload: ChatMessage }
-  | { event: "score_update"; payload: { playerId: string; score: number; crownHolderId: string | null } }
-  | { event: "turn_ended"; payload: { revealedWord: string; players: PublicPlayer[] } }
-  | { event: "game_ended"; payload: { finalStandings: PublicPlayer[] } }
-  | { event: "state_sync"; payload: RoomSnapshot }
-  | { event: "round_info"; payload: { currentRound: number; totalRounds: number; drawerName: string } };
 
 export interface SessionPlayer {
   id: string;
@@ -158,24 +184,22 @@ export const AVATARS = [
 
 export type AvatarId = (typeof AVATARS)[number];
 
-export const DEFAULT_WORDS = [
-  "apple", "banana", "car", "house", "tree", "sun", "moon", "star",
-  "cat", "dog", "fish", "bird", "flower", "mountain", "river", "ocean",
-  "pizza", "cake", "book", "phone", "computer", "guitar", "piano", "drum",
-  "rainbow", "cloud", "snow", "fire", "water", "earth", "rocket", "planet",
-  "castle", "dragon", "wizard", "pirate", "treasure", "island", "bridge", "train",
-  "bicycle", "airplane", "helicopter", "submarine", "camera", "television", "clock", "lamp",
-  "chair", "table", "window", "door", "garden", "forest", "desert", "volcano",
-  "elephant", "giraffe", "monkey", "penguin", "dolphin", "whale", "shark", "octopus",
-  "butterfly", "spider", "snake", "frog", "turtle", "rabbit", "horse", "cow",
-  "sandwich", "hamburger", "noodles", "sushi", "taco", "cookie", "donut", "ice cream",
-  "umbrella", "backpack", "glasses", "hat", "shoe", "sock", "jacket", "scarf",
-  "hammer", "scissors", "paintbrush", "pencil", "notebook", "envelope", "balloon", "kite",
-  "skateboard", "surfboard", "trophy", "medal", "crown", "diamond", "key", "lock",
-  "microphone", "headphones", "speaker", "battery", "lightning", "tornado", "earthquake", "avalanche",
-];
-
-export const TURN_DURATIONS = [60, 90, 120, 150] as const;
+export const TURN_DURATIONS: TurnDuration[] = [60, 90, 120, 150];
+export const REACTION_EMOJIS = ["👍", "🎉", "😂", "🔥", "👏"] as const;
+export type ReactionEmoji = (typeof REACTION_EMOJIS)[number];
 
 export const ROOM_TTL_MS = 2 * 60 * 60 * 1000;
+/** Treat a player as gone after this long without activity (tab closed, etc.). */
+export const PLAYER_IDLE_MS = 90 * 1000;
 export const WORD_CHOICE_TIMEOUT_MS = 15_000;
+/** Max chat lines kept server-side per room. */
+export const MAX_CHAT_MESSAGES = 200;
+/** Max canvas actions stored for the current turn. */
+export const MAX_CANVAS_ACTIONS_PER_TURN = 3000;
+/** Minimum ms between guesses from the same player. */
+export const GUESS_COOLDOWN_MS = 800;
+
+export type RealtimeEvent = {
+  event: string;
+  payload: unknown;
+};

@@ -7,38 +7,22 @@ export function getGuesserPoints(place: number): number {
   return 35;
 }
 
-export function getDrawerPoints(correctCount: number): number {
+/** Fixed per-guesser drawer points plus time-remaining bonus on last correct guess. */
+export function getDrawerPoints(
+  correctCount: number,
+  turnDurationSec: number,
+  turnEndTime: number | null,
+  lastGuessTime: number | null
+): number {
   if (correctCount === 0) return 0;
-  return Math.min(correctCount * 50, 200);
-}
 
-export interface TurnScoreResult {
-  playerId: string;
-  pointsEarned: number;
-}
+  const base = Math.min(correctCount * 50, 200);
+  if (!turnEndTime || !lastGuessTime || turnDurationSec <= 0) return base;
 
-export function calculateTurnScores(
-  drawerId: string,
-  correctGuessers: string[]
-): TurnScoreResult[] {
-  if (correctGuessers.length === 0) {
-    return [{ playerId: drawerId, pointsEarned: 0 }];
-  }
-
-  const results: TurnScoreResult[] = [];
-  correctGuessers.forEach((playerId, index) => {
-    results.push({
-      playerId,
-      pointsEarned: getGuesserPoints(index + 1),
-    });
-  });
-
-  results.push({
-    playerId: drawerId,
-    pointsEarned: getDrawerPoints(correctGuessers.length),
-  });
-
-  return results;
+  const remainingMs = Math.max(0, turnEndTime - lastGuessTime);
+  const remainingRatio = remainingMs / (turnDurationSec * 1000);
+  const timeBonus = Math.round(remainingRatio * 100);
+  return Math.min(base + timeBonus, 350);
 }
 
 export function updateCrownHolder(

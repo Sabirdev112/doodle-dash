@@ -1,6 +1,7 @@
 "use client";
 
 import type { PublicPlayer } from "@/lib/types";
+import AvatarDisplay from "@/components/AvatarDisplay";
 
 interface EndGamePodiumProps {
   standings: PublicPlayer[];
@@ -23,9 +24,8 @@ export default function EndGamePodium({ standings }: EndGamePodiumProps) {
           return (
             <div key={player.id} className="flex flex-col items-center">
               <span className="text-3xl">{medals[idx]}</span>
-              <img
-                src={`/avatars/${player.avatar}.svg`}
-                alt=""
+              <AvatarDisplay
+                avatar={player.avatar}
                 className="my-2 h-14 w-14 rounded-lg border-2 border-doodle-ink bg-paper-dark"
               />
               <p className="font-sketch text-lg">{player.name}</p>

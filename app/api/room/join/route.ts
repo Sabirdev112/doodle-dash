@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { joinRoom } from "@/lib/rooms";
+import { getPlayersList, getRoomSnapshot, joinRoom } from "@/lib/rooms";
 import { checkIpRateLimit } from "@/lib/rateLimit";
 import { sanitizePlayerName } from "@/lib/sanitize";
-import { AVATARS } from "@/lib/types";
+import { isValidAvatar } from "@/lib/avatars";
+import { createSessionToken } from "@/lib/sessionToken";
 
 const joinSchema = z.object({
   roomId: z.string().min(6).max(12),
-  playerId: z.string().min(1).max(30),
+  playerId: z.string().min(1).max(36),
   name: z.string().min(1).max(20),
-  avatar: z.enum(AVATARS),
+  avatar: z.string().max(64).refine(isValidAvatar, "Invalid avatar"),
 });
 
 function getClientIp(req: NextRequest): string {
@@ -30,7 +31,19 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const parsed = joinSchema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+      const issue = parsed.error.issues[0];
+      const field = issue?.path[0];
+      const message =
+        field === "playerId"
+          ? "Session error — refresh the page and try again."
+          : field === "avatar"
+            ? "Pick an avatar before joining."
+            : field === "name"
+              ? "Enter a name before joining."
+              : field === "roomId"
+                ? "That invite link looks invalid."
+                : "Invalid input";
+      return NextResponse.json({ error: message }, { status: 400 });
     }
 
     const { roomId, playerId, name, avatar } = parsed.data;
@@ -44,24 +57,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: result.error }, { status: 400 });
     }
 
+    const effectivePlayerId = result.playerId;
+    const sessionToken = createSessionToken(result.room.id, effectivePlayerId);
+
     return NextResponse.json({
       roomId: result.room.id,
-      playerId,
+      playerId: effectivePlayerId,
+      sessionToken,
       settings: result.room.settings,
       phase: result.room.phase,
-      players: result.room.playerOrder
-        .map((id) => result.room.players.get(id))
-        .filter(Boolean)
-        .map((p) => ({
-          id: p!.id,
-          name: p!.name,
-          avatar: p!.avatar,
-          score: p!.score,
-          isOwner: p!.isOwner,
-          hasGuessedCorrectly: p!.hasGuessedCorrectly,
-          isDrawer: result.room.drawerId === p!.id,
-          hasCrown: result.room.crownHolderId === p!.id,
-        })),
+      players: getPlayersList(result.room),
+      reconnected: result.reconnected,
+      snapshot: result.reconnected
+        ? getRoomSnapshot(result.room, effectivePlayerId)
+        : undefined,
     });
   } catch {
     return NextResponse.json({ error: "Server error" }, { status: 500 });

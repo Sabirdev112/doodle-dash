@@ -61,4 +61,240 @@
   .wobble-right {
     transform: rotate(1deg);
   }
+
+  @keyframes comic-pop-in {
+    0% {
+      opacity: 0;
+      transform: scale(0.85) rotate(-3deg);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1) rotate(0deg);
+    }
+  }
+
+  @keyframes comic-panel-swap {
+    0% {
+      opacity: 0;
+      transform: translateY(12px) rotate(1deg);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) rotate(0deg);
+    }
+  }
+
+  @keyframes overlay-exit-up-keyframes {
+    to {
+      opacity: 0;
+      transform: translateY(-120%) rotate(-4deg);
+    }
+  }
+
+  @keyframes overlay-exit-flip-keyframes {
+    to {
+      opacity: 0;
+      transform: perspective(800px) rotateX(75deg) scale(0.9);
+    }
+  }
+
+  @keyframes overlay-exit-peel-keyframes {
+    to {
+      opacity: 0;
+      transform: translateX(110%) rotate(8deg);
+    }
+  }
+
+  @keyframes overlay-exit-zoom-keyframes {
+    to {
+      opacity: 0;
+      transform: scale(0.2) rotate(12deg);
+    }
+  }
+
+  .comic-overlay-enter {
+    animation: comic-pop-in 0.45s cubic-bezier(0.34, 1.4, 0.64, 1) both;
+  }
+
+  .comic-panel-swap {
+    animation: comic-panel-swap 0.35s ease-out both;
+  }
+
+  .overlay-exit-up {
+    animation: overlay-exit-up-keyframes 0.6s ease-in forwards;
+  }
+
+  .overlay-exit-flip {
+    animation: overlay-exit-flip-keyframes 0.65s ease-in forwards;
+    transform-origin: center bottom;
+  }
+
+  .overlay-exit-peel {
+    animation: overlay-exit-peel-keyframes 0.6s ease-in forwards;
+  }
+
+  .overlay-exit-zoom {
+    animation: overlay-exit-zoom-keyframes 0.55s ease-in forwards;
+  }
+
+  /* ── Avatar animations ── */
+
+  @keyframes avatar-bob {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-2px);
+    }
+  }
+
+  @keyframes avatar-head-tilt {
+    0%,
+    100% {
+      transform: rotate(0deg);
+    }
+    25% {
+      transform: rotate(-1.5deg);
+    }
+    75% {
+      transform: rotate(1.5deg);
+    }
+  }
+
+  @keyframes avatar-blink {
+    0%,
+    88%,
+    100% {
+      transform: scaleY(1);
+    }
+    92% {
+      transform: scaleY(0.08);
+    }
+  }
+
+  @keyframes avatar-float {
+    0%,
+    100% {
+      transform: translateY(0) rotate(0deg);
+    }
+    33% {
+      transform: translateY(-3px) rotate(-1deg);
+    }
+    66% {
+      transform: translateY(-1px) rotate(1deg);
+    }
+  }
+
+  @keyframes avatar-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  @keyframes avatar-glow {
+    0%,
+    100% {
+      filter: brightness(1);
+    }
+    50% {
+      filter: brightness(1.12);
+    }
+  }
+
+  @keyframes avatar-robot-scan {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.6;
+    }
+  }
+
+  @keyframes avatar-confetti-pop {
+    0%,
+    100% {
+      transform: translateY(0) scale(1);
+      opacity: 1;
+    }
+    50% {
+      transform: translateY(-3px) scale(1.15);
+      opacity: 0.8;
+    }
+  }
+
+  @keyframes avatar-party-wiggle {
+    0%,
+    100% {
+      transform: rotate(0deg);
+    }
+    25% {
+      transform: rotate(-4deg);
+    }
+    75% {
+      transform: rotate(4deg);
+    }
+  }
+
+  .avatar-idle .avatar-head-group {
+    animation: avatar-bob 3s ease-in-out infinite, avatar-head-tilt 6s ease-in-out infinite;
+    transform-origin: 32px 36px;
+  }
+
+  .avatar-eye-blink {
+    animation: avatar-blink 4.5s ease-in-out infinite;
+  }
+
+  .avatar-eye-blink:nth-child(2),
+  g.avatar-eye-blink + g.avatar-eye-blink {
+    animation-delay: 0.15s;
+  }
+
+  .avatar-svg[data-face="ghost"] .avatar-head-group {
+    animation: avatar-float 2.8s ease-in-out infinite;
+  }
+
+  .avatar-svg[data-face="ghost"] .avatar-ghost-body {
+    animation: avatar-glow 3s ease-in-out infinite;
+  }
+
+  .avatar-antenna-dot {
+    animation: avatar-pulse 1.2s ease-in-out infinite;
+  }
+
+  .avatar-robot-eye {
+    animation: avatar-robot-scan 2s ease-in-out infinite;
+  }
+
+  .avatar-alien-head {
+    animation: avatar-glow 2.5s ease-in-out infinite;
+  }
+
+  .avatar-party-hat {
+    animation: avatar-party-wiggle 1.5s ease-in-out infinite;
+    transform-origin: 32px 14px;
+  }
+
+  .avatar-confetti {
+    animation: avatar-confetti-pop 1.8s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .avatar-idle .avatar-head-group,
+    .avatar-eye-blink,
+    .avatar-svg[data-face="ghost"] .avatar-head-group,
+    .avatar-svg[data-face="ghost"] .avatar-ghost-body,
+    .avatar-antenna-dot,
+    .avatar-robot-eye,
+    .avatar-alien-head,
+    .avatar-party-hat,
+    .avatar-confetti {
+      animation: none;
+    }
+  }
 }

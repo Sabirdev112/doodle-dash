@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ChatMessage } from "@/lib/types";
+import ButtonSpinner from "./ButtonSpinner";
+import AvatarDisplay from "@/components/AvatarDisplay";
 import { sendAction } from "@/lib/store";
 
 interface GuessChatProps {
@@ -11,6 +13,7 @@ interface GuessChatProps {
   isDrawer: boolean;
   hasGuessed: boolean;
   wordLength: number;
+  wordDisplay?: string;
   secretWord: string | null;
   disabled?: boolean;
 }
@@ -22,38 +25,40 @@ export default function GuessChat({
   isDrawer,
   hasGuessed,
   wordLength,
+  wordDisplay,
   secretWord,
   disabled,
 }: GuessChatProps) {
   const [text, setText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const sendGuess = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!text.trim() || disabled) return;
-    await sendAction({ type: "guess", roomId, playerId, text: text.trim() });
+    if (!text.trim() || disabled || submitting) return;
+    const guess = text.trim();
+    setSubmitting(true);
     setText("");
+    await sendAction({ type: "guess", roomId, playerId, text: guess });
+    setSubmitting(false);
+    inputRef.current?.focus();
   };
 
-  const underscores =
+  const display =
     secretWord && isDrawer
       ? secretWord
           .split("")
           .map((c) => (c === " " ? " " : "_"))
           .join(" ")
-      : "_ ".repeat(wordLength).trim();
+      : wordDisplay || (wordLength > 0 ? "_ ".repeat(wordLength).trim() : "???");
 
   return (
     <div className="flex h-full flex-col doodle-card overflow-hidden">
       <div className="border-b-2 border-doodle-ink/10 bg-paper-dark px-4 py-3">
         <h3 className="font-sketch text-lg text-doodle-ink">Guesses</h3>
-        {!isDrawer && wordLength > 0 && (
+        {!isDrawer && (wordLength > 0 || wordDisplay) && (
           <p className="mt-1 font-mono text-lg tracking-widest text-doodle-grape">
-            {hasGuessed ? "✔️ nailed it!" : underscores}
-          </p>
-        )}
-        {isDrawer && secretWord && (
-          <p className="mt-1 text-sm text-doodle-muted">
-            Draw: <strong className="text-doodle-ink">{secretWord}</strong>
+            {hasGuessed ? "✔️ nailed it!" : display}
           </p>
         )}
       </div>
@@ -75,9 +80,8 @@ export default function GuessChat({
                   : "text-doodle-ink"
             }`}
           >
-            <img
-              src={`/avatars/${msg.avatar}.svg`}
-              alt=""
+            <AvatarDisplay
+              avatar={msg.avatar}
               className="mt-0.5 h-6 w-6 shrink-0 rounded border border-doodle-ink/10 bg-paper-dark"
             />
             <div>
@@ -98,15 +102,28 @@ export default function GuessChat({
         >
           <div className="flex gap-2">
             <input
+              ref={inputRef}
               type="text"
               value={text}
               onChange={(e) => setText(e.target.value)}
               placeholder="wild guess goes here…"
               maxLength={50}
+              aria-busy={submitting}
               className="doodle-input flex-1 py-2 text-sm"
             />
-            <button type="submit" className="doodle-btn-primary px-4 py-2 text-base">
-              Go
+            <button
+              type="submit"
+              disabled={submitting || !text.trim()}
+              className="doodle-btn-primary px-4 py-2 text-base"
+            >
+              {submitting ? (
+                <>
+                  <ButtonSpinner />
+                  …
+                </>
+              ) : (
+                "Go"
+              )}
             </button>
           </div>
         </form>

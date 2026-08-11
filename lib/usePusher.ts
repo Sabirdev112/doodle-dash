@@ -3,64 +3,118 @@
 import { useEffect, useRef } from "react";
 import PusherClient from "pusher-js";
 import { useGameStore } from "@/lib/store";
-import type { RoomSnapshot } from "@/lib/types";
+import type {
+  CanvasAction,
+  ChatMessage,
+  PublicPlayer,
+  ReactionEvent,
+  RoomSnapshot,
+  TurnPointAward,
+} from "@/lib/types";
 
-export function usePusher(roomId: string, playerId: string) {
+async function requestResync(roomId: string) {
+  try {
+    const { sessionToken } = useGameStore.getState();
+    if (!sessionToken) return;
+
+    const res = await fetch("/api/room/action", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${sessionToken}`,
+      },
+      body: JSON.stringify({ type: "resync", roomId }),
+    });
+    const data = (await res.json()) as { ok?: boolean; snapshot?: RoomSnapshot };
+    if (res.ok && data.ok && data.snapshot) {
+      useGameStore.getState().applyRoomSnapshot(data.snapshot);
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
+export function usePusher(
+  roomId: string,
+  playerId: string,
+  sessionToken: string
+) {
   const pusherRef = useRef<PusherClient | null>(null);
-  const {
-    setConnectionState,
-    applySnapshot,
-    addPlayer,
-    removePlayer,
-    setOwner,
-    addChatMessage,
-    addCanvasActions,
-    removeCanvasAction,
-    clearCanvas,
-    updateScore,
-  } = useGameStore();
+  const storeRef = useRef(useGameStore.getState());
 
   useEffect(() => {
-    if (!roomId || !playerId) return;
+    storeRef.current = useGameStore.getState();
+  });
+
+  useEffect(() => {
+    if (!roomId || !playerId || !sessionToken) return;
+
     const key = process.env.NEXT_PUBLIC_PUSHER_KEY;
     const cluster = process.env.NEXT_PUBLIC_PUSHER_CLUSTER;
     if (!key || !cluster) return;
 
+    const store = storeRef.current;
+    store.setConnectionState("connecting");
+
     const pusher = new PusherClient(key, {
       cluster,
-      authEndpoint: "/api/pusher/auth",
-      auth: {
-        headers: { "x-player-id": playerId },
+      channelAuthorization: {
+        transport: "ajax",
+        endpoint: "/api/pusher/auth",
+        headers: { Authorization: `Bearer ${sessionToken}` },
       },
     });
 
     pusher.connection.bind("state_change", (states: { current: string }) => {
-      if (states.current === "connected") setConnectionState("connected");
-      else if (states.current === "connecting") setConnectionState("connecting");
-      else setConnectionState("disconnected");
+      const s = storeRef.current;
+      if (states.current === "connected") {
+        s.setConnectionState("connected");
+      } else if (
+        states.current === "connecting" ||
+        states.current === "unavailable"
+      ) {
+        s.setConnectionState("connecting");
+      } else {
+        s.setConnectionState("disconnected");
+      }
     });
 
     pusher.connection.bind("connected", () => {
-      void fetch("/api/room/action", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "resync", roomId, playerId }),
-      });
+      requestResync(roomId);
     });
 
     const channel = pusher.subscribe(`private-room-${roomId}`);
 
-    channel.bind("player_joined", (data: { player: Parameters<typeof addPlayer>[0] }) => {
-      addPlayer(data.player);
+    channel.bind("pusher:subscription_succeeded", () => {
+      storeRef.current.setConnectionState("connected");
+      requestResync(roomId);
+    });
+
+    channel.bind("pusher:subscription_error", () => {
+      storeRef.current.setConnectionState("disconnected");
+    });
+
+    channel.bind("player_joined", (data: { player: PublicPlayer }) => {
+      storeRef.current.addPlayer(data.player);
     });
 
     channel.bind("player_left", (data: { playerId: string; newOwnerId?: string }) => {
-      removePlayer(data.playerId);
-      if (data.newOwnerId) setOwner(data.newOwnerId);
+      const s = storeRef.current;
+      s.removePlayer(data.playerId);
+      if (data.newOwnerId) s.setOwner(data.newOwnerId);
     });
 
     channel.bind("owner_changed", (data: { newOwnerId: string }) => {
-      setOwner(data.newOwnerId);
+      storeRef.current.setOwner(data.newOwnerId);
+    });
+
+    channel.bind("player_muted", (data: { playerId: string }) => {
+      const s = storeRef.current;
+      s.applySnapshot({
+        players: s.players.map((p) =>
+          p.id === data.playerId ? { ...p, isMuted: true } : p
+        ),
+      });
     });
 
     channel.bind("room_disbanded", () => {
@@ -68,13 +122,16 @@ export function usePusher(roomId: string, playerId: string) {
     });
 
     channel.bind("game_started", (data: { currentRound: number }) => {
-      applySnapshot({ phase: "word_select", currentRound: data.currentRound });
+      storeRef.current.applySnapshot({
+        phase: "word_select",
+        currentRound: data.currentRound,
+      });
     });
 
     channel.bind(
       "round_info",
       (data: { currentRound: number; totalRounds: number; drawerName: string }) => {
-        applySnapshot({
+        storeRef.current.applySnapshot({
           currentRound: data.currentRound,
           totalRounds: data.totalRounds,
           drawerName: data.drawerName,
@@ -84,28 +141,28 @@ export function usePusher(roomId: string, playerId: string) {
 
     channel.bind(
       "word_choices",
-      (data: { drawerId: string; deadline: number }) => {
-        applySnapshot({
+      (data: {
+        drawerId: string;
+        deadline: number;
+        choices?: string[];
+      }) => {
+        const s = storeRef.current;
+        s.applySnapshot({
           phase: "word_select",
           drawerId: data.drawerId,
           wordChoiceDeadline: data.deadline,
+          wordChoices: data.choices ?? s.wordChoices,
           chatMessages: [],
           canvasActions: [],
           secretWord: null,
-          wordChoices: [],
-          players: useGameStore.getState().players.map((p) => ({
+          wordDisplay: "",
+          drawingStarted: false,
+          players: s.players.map((p) => ({
             ...p,
             isDrawer: p.id === data.drawerId,
             hasGuessedCorrectly: false,
           })),
         });
-        if (data.drawerId === playerId) {
-          void fetch("/api/room/action", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ type: "resync", roomId, playerId }),
-          });
-        }
       }
     );
 
@@ -114,55 +171,86 @@ export function usePusher(roomId: string, playerId: string) {
       (data: {
         drawerId: string;
         wordLength: number;
+        wordDisplay: string;
         turnEndTime: number;
+        drawingStarted?: boolean;
       }) => {
-        applySnapshot({
+        const s = storeRef.current;
+        s.applySnapshot({
           phase: "drawing",
           drawerId: data.drawerId,
           wordLength: data.wordLength,
+          wordDisplay: data.wordDisplay,
+          drawingStarted: data.drawingStarted ?? false,
           secretWord: null,
+          revealedWord: null,
+          turnPointAwards: [],
           turnEndTime: data.turnEndTime,
           wordChoices: [],
-          players: useGameStore.getState().players.map((p) => ({
+          players: s.players.map((p) => ({
             ...p,
             isDrawer: p.id === data.drawerId,
             hasGuessedCorrectly: false,
           })),
         });
         if (data.drawerId === playerId) {
-          void fetch("/api/room/action", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ type: "resync", roomId, playerId }),
-          });
+          requestResync(roomId);
         }
       }
     );
 
-    channel.bind("draw_strokes", (data: { strokes: Parameters<typeof addCanvasActions>[0] }) => {
-      addCanvasActions(data.strokes);
+    channel.bind(
+      "hint_update",
+      (data: {
+        wordLength: number;
+        wordDisplay: string;
+        drawingStarted?: boolean;
+      }) => {
+        const s = storeRef.current;
+        s.applySnapshot({
+          wordLength: data.wordLength,
+          wordDisplay: data.wordDisplay,
+          drawingStarted: data.drawingStarted ?? s.drawingStarted,
+        });
+      }
+    );
+
+    channel.bind("reaction", (data: ReactionEvent) => {
+      storeRef.current.addReaction(data);
     });
 
-    channel.bind("fill", (data: { action: Parameters<typeof addCanvasActions>[0][0] }) => {
-      addCanvasActions([data.action]);
+    channel.bind("draw_strokes", (data: { strokes: CanvasAction[] }) => {
+      const s = storeRef.current;
+      const existing = new Set(s.canvasActions.map((action) => action.id));
+      const strokes = data.strokes.filter(
+        (stroke) => stroke.type === "stroke" && !existing.has(stroke.id)
+      ) as CanvasAction[];
+      if (strokes.length > 0) {
+        s.addCanvasActions(strokes);
+      }
+    });
+
+    channel.bind("fill", (data: { action: CanvasAction }) => {
+      const s = storeRef.current;
+      if (s.canvasActions.some((action) => action.id === data.action.id)) return;
+      s.addCanvasActions([data.action]);
     });
 
     channel.bind("undo", (data: { actionId: string }) => {
-      removeCanvasAction(data.actionId);
+      storeRef.current.removeCanvasAction(data.actionId);
     });
 
     channel.bind("canvas_cleared", () => {
-      clearCanvas();
+      storeRef.current.clearCanvas();
     });
 
-    channel.bind("guess_result", (data: Parameters<typeof addChatMessage>[0]) => {
-      addChatMessage(data);
+    channel.bind("guess_result", (data: ChatMessage) => {
+      const s = storeRef.current;
+      s.addChatMessage(data);
       if (data.kind === "correct") {
-        applySnapshot({
-          players: useGameStore.getState().players.map((p) =>
-            p.id === data.playerId
-              ? { ...p, hasGuessedCorrectly: true }
-              : p
+        s.applySnapshot({
+          players: s.players.map((p) =>
+            p.id === data.playerId ? { ...p, hasGuessedCorrectly: true } : p
           ),
         });
       }
@@ -171,17 +259,22 @@ export function usePusher(roomId: string, playerId: string) {
     channel.bind(
       "score_update",
       (data: { playerId: string; score: number; crownHolderId: string | null }) => {
-        updateScore(data.playerId, data.score, data.crownHolderId);
+        storeRef.current.updateScore(data.playerId, data.score, data.crownHolderId);
       }
     );
 
     channel.bind(
       "turn_ended",
-      (data: { revealedWord: string; players: Parameters<typeof applySnapshot>[0]["players"] }) => {
-        applySnapshot({
+      (data: {
+        revealedWord: string;
+        turnPointAwards?: TurnPointAward[];
+        players: RoomSnapshot["players"];
+      }) => {
+        storeRef.current.applySnapshot({
           phase: "turn_end",
           revealedWord: data.revealedWord,
           secretWord: data.revealedWord,
+          turnPointAwards: data.turnPointAwards ?? [],
           players: data.players ?? [],
           crownHolderId: data.players?.find((p) => p.hasCrown)?.id ?? null,
         });
@@ -191,7 +284,7 @@ export function usePusher(roomId: string, playerId: string) {
     channel.bind(
       "game_ended",
       (data: { finalStandings: RoomSnapshot["finalStandings"] }) => {
-        applySnapshot({
+        storeRef.current.applySnapshot({
           phase: "ended",
           finalStandings: data.finalStandings ?? null,
         });
@@ -199,24 +292,15 @@ export function usePusher(roomId: string, playerId: string) {
     );
 
     channel.bind("state_sync", (data: RoomSnapshot) => {
-      applySnapshot({
-        phase: data.phase,
-        settings: data.settings,
-        players: data.players,
-        currentRound: data.currentRound,
-        totalRounds: data.totalRounds,
-        drawerId: data.drawerId,
-        wordLength: data.wordLength,
-        secretWord: data.secretWord ?? null,
-        wordChoices: data.wordChoices ?? [],
-        wordChoiceDeadline: data.wordChoiceDeadline ?? null,
-        turnEndTime: data.turnEndTime,
-        canvasActions: data.canvasActions,
-        chatMessages: data.chatMessages,
-        correctGuessers: data.correctGuessers,
-        finalStandings: data.finalStandings ?? null,
-        crownHolderId: data.players.find((p) => p.hasCrown)?.id ?? null,
-      });
+      const s = storeRef.current;
+      s.applyRoomSnapshot(data);
+      const isDrawer = data.drawerId === playerId;
+      if (isDrawer && data.phase === "drawing" && !data.secretWord) {
+        void requestResync(roomId);
+      }
+      if (isDrawer && data.phase === "word_select" && !data.wordChoices?.length) {
+        void requestResync(roomId);
+      }
     });
 
     pusherRef.current = pusher;
@@ -225,19 +309,7 @@ export function usePusher(roomId: string, playerId: string) {
       channel.unbind_all();
       pusher.unsubscribe(`private-room-${roomId}`);
       pusher.disconnect();
+      pusherRef.current = null;
     };
-  }, [
-    roomId,
-    playerId,
-    setConnectionState,
-    applySnapshot,
-    addPlayer,
-    removePlayer,
-    setOwner,
-    addChatMessage,
-    addCanvasActions,
-    removeCanvasAction,
-    clearCanvas,
-    updateScore,
-  ]);
+  }, [roomId, playerId, sessionToken]);
 }
