@@ -1,91 +1,78 @@
-import { AVATARS, type AvatarId } from "@/lib/types";
+export const CHARACTERS = [
+  { id: "beep", label: "Beep" },
+  { id: "whiskers", label: "Mr. Whiskers" },
+  { id: "zorg", label: "Zorg" },
+  { id: "chaos", label: "Dr. Chaos" },
+  { id: "explorer", label: "Explorer" },
+  { id: "cool-cat", label: "Cool Cat" },
+  { id: "sprout", label: "Sprout" },
+  { id: "rocker", label: "Rocker" },
+  { id: "intern", label: "Intern" },
+  { id: "diva", label: "Diva" },
+] as const;
 
-export const FACES = [...AVATARS] as const;
-export type FaceId = (typeof FACES)[number];
+export type CharacterId = (typeof CHARACTERS)[number]["id"];
 
-export const OUTFITS = ["tee", "hoodie", "overalls", "dress", "suit", "jersey"] as const;
-export type OutfitId = (typeof OUTFITS)[number];
+export const CHARACTER_IDS = CHARACTERS.map((c) => c.id) as CharacterId[];
 
-export const HEADGEARS = ["none", "cap", "crown", "headphones", "bow", "party"] as const;
-export type HeadgearId = (typeof HEADGEARS)[number];
+export const DEFAULT_CHARACTER: CharacterId = "beep";
 
-export type AvatarCategory = "face" | "outfit" | "headgear";
+/** Bump when character PNG assets change to bust browser / Next image cache. */
+export const AVATAR_ASSET_VERSION = 3;
 
-export interface AvatarConfig {
-  face: FaceId;
-  outfit: OutfitId;
-  headgear: HeadgearId;
+const CHARACTER_SET = new Set<string>(CHARACTER_IDS);
+
+const LEGACY_FACE_MAP: Record<string, CharacterId> = {
+  cat: "whiskers",
+  dog: "explorer",
+  fox: "cool-cat",
+  owl: "chaos",
+  panda: "sprout",
+  robot: "beep",
+  alien: "zorg",
+  ghost: "sprout",
+};
+
+export function getCharacter(id: CharacterId) {
+  return CHARACTERS.find((c) => c.id === id) ?? CHARACTERS[0];
 }
 
-export const DEFAULT_AVATAR: AvatarConfig = {
-  face: "cat",
-  outfit: "tee",
-  headgear: "none",
-};
-
-export const CATEGORY_OPTIONS: Record<AvatarCategory, readonly string[]> = {
-  face: FACES,
-  outfit: OUTFITS,
-  headgear: HEADGEARS,
-};
-
-export const CATEGORY_LABELS: Record<AvatarCategory, string> = {
-  face: "Face",
-  outfit: "Outfit",
-  headgear: "Head Gear",
-};
-
-const OUTFIT_SET = new Set<string>(OUTFITS);
-const HEADGEAR_SET = new Set<string>(HEADGEARS);
-const FACE_SET = new Set<string>(FACES);
-
-export function encodeAvatar(config: AvatarConfig): string {
-  return `${config.face}:${config.outfit}:${config.headgear}`;
+export function getCharacterImage(id: CharacterId): string {
+  return `/avatars/characters/${id}.png?v=${AVATAR_ASSET_VERSION}`;
 }
 
-export function parseAvatar(value: string | undefined | null): AvatarConfig {
-  if (!value) return { ...DEFAULT_AVATAR };
-
-  if (value.includes(":")) {
-    const [face, outfit, headgear] = value.split(":");
-    return {
-      face: FACE_SET.has(face) ? (face as FaceId) : DEFAULT_AVATAR.face,
-      outfit: OUTFIT_SET.has(outfit) ? (outfit as OutfitId) : DEFAULT_AVATAR.outfit,
-      headgear: HEADGEAR_SET.has(headgear)
-        ? (headgear as HeadgearId)
-        : DEFAULT_AVATAR.headgear,
-    };
+export function parseAvatar(value: string | undefined | null): CharacterId {
+  if (value && CHARACTER_SET.has(value)) {
+    return value as CharacterId;
   }
-
-  if (FACE_SET.has(value)) {
-    return { face: value as FaceId, outfit: "tee", headgear: "none" };
+  if (value?.includes(":")) {
+    return LEGACY_FACE_MAP[value.split(":")[0]] ?? DEFAULT_CHARACTER;
   }
+  if (value && LEGACY_FACE_MAP[value]) {
+    return LEGACY_FACE_MAP[value];
+  }
+  return DEFAULT_CHARACTER;
+}
 
-  return { ...DEFAULT_AVATAR };
+export function encodeAvatar(character: CharacterId): string {
+  return character;
 }
 
 export function isValidAvatar(value: string): boolean {
-  if (FACE_SET.has(value)) return true;
-  const config = parseAvatar(value);
-  return encodeAvatar(config) === value;
+  if (CHARACTER_SET.has(value)) return true;
+  if (value.includes(":")) return true;
+  return value in LEGACY_FACE_MAP;
 }
 
-export function cycleAvatarPart(
-  config: AvatarConfig,
-  category: AvatarCategory,
+export function cycleCharacter(
+  current: CharacterId,
   direction: 1 | -1
-): AvatarConfig {
-  const options = CATEGORY_OPTIONS[category];
-  const current = config[category];
-  const index = options.indexOf(current);
-  const nextIndex = (index + direction + options.length) % options.length;
-  return { ...config, [category]: options[nextIndex] } as AvatarConfig;
+): CharacterId {
+  const index = CHARACTER_IDS.indexOf(current);
+  const next =
+    (index + direction + CHARACTER_IDS.length) % CHARACTER_IDS.length;
+  return CHARACTER_IDS[next];
 }
 
-export function getCategoryLabel(category: AvatarCategory, config: AvatarConfig): string {
-  const value = config[category];
-  return value === "none" ? "None" : value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-/** @deprecated Use encodeAvatar — kept for gradual migration */
-export type { AvatarId };
+export type AvatarId = CharacterId;
+export const DEFAULT_AVATAR = DEFAULT_CHARACTER;

@@ -26,7 +26,7 @@ export default function Scoreboard({ players }: ScoreboardProps) {
             </span>
             <AvatarDisplay
               avatar={player.avatar}
-              className="h-7 w-7 rounded-md border border-doodle-ink/15 bg-paper-dark"
+              className="h-7 w-7 rounded-md"
             />
             {player.hasCrown && <span className="text-xs">👑</span>}
             {player.isDrawer && (

@@ -375,7 +375,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
             strokes: chunk,
           });
           const data = (await res.json()) as { ok?: boolean; dropped?: boolean };
-          if (!res.ok || (!data.ok && !data.dropped)) {
+          if (!res.ok || !data.ok) {
             failed.push(...chunk);
           }
         } catch {

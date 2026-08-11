@@ -241,59 +241,14 @@
     }
   }
 
-  .avatar-idle .avatar-head-group {
-    animation: avatar-bob 3s ease-in-out infinite, avatar-head-tilt 6s ease-in-out infinite;
-    transform-origin: 32px 36px;
-  }
-
-  .avatar-eye-blink {
-    animation: avatar-blink 4.5s ease-in-out infinite;
-  }
-
-  .avatar-eye-blink:nth-child(2),
-  g.avatar-eye-blink + g.avatar-eye-blink {
-    animation-delay: 0.15s;
-  }
-
-  .avatar-svg[data-face="ghost"] .avatar-head-group {
-    animation: avatar-float 2.8s ease-in-out infinite;
-  }
-
-  .avatar-svg[data-face="ghost"] .avatar-ghost-body {
-    animation: avatar-glow 3s ease-in-out infinite;
-  }
-
-  .avatar-antenna-dot {
-    animation: avatar-pulse 1.2s ease-in-out infinite;
-  }
-
-  .avatar-robot-eye {
-    animation: avatar-robot-scan 2s ease-in-out infinite;
-  }
-
-  .avatar-alien-head {
-    animation: avatar-glow 2.5s ease-in-out infinite;
-  }
-
-  .avatar-party-hat {
-    animation: avatar-party-wiggle 1.5s ease-in-out infinite;
-    transform-origin: 32px 8px;
-  }
-
-  .avatar-confetti {
-    animation: avatar-confetti-pop 1.8s ease-in-out infinite;
+  .avatar-idle.avatar-character {
+    animation: avatar-bob 3s ease-in-out infinite;
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .avatar-idle .avatar-head-group,
-    .avatar-eye-blink,
-    .avatar-svg[data-face="ghost"] .avatar-head-group,
-    .avatar-svg[data-face="ghost"] .avatar-ghost-body,
-    .avatar-antenna-dot,
-    .avatar-robot-eye,
-    .avatar-alien-head,
-    .avatar-party-hat,
-    .avatar-confetti {
+    .avatar-idle.avatar-character,
+    .avatar-idle.avatar-svg,
+    .avatar-idle.avatar-sprite {
       animation: none;
     }
   }

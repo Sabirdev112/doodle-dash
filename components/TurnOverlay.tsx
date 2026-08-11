@@ -137,7 +137,7 @@ export default function TurnOverlay({
                     >
                       <AvatarDisplay
                         avatar={award.avatar}
-                        className="h-9 w-auto rounded-md border border-doodle-ink/20"
+                        className="h-9 w-9 rounded-md"
                       />
                       <span className="min-w-0 flex-1 truncate font-semibold text-doodle-ink">
                         {award.name}

@@ -30,7 +30,7 @@ import TurnOverlay from "@/components/TurnOverlay";
 
 import WaitingRoom from "@/components/WaitingRoom";
 
-import { leaveSession, useGameStore } from "@/lib/store";
+import { tryReconnectRoom, useGameStore } from "@/lib/store";
 
 import ButtonSpinner from "@/components/ButtonSpinner";
 
@@ -61,55 +61,34 @@ export default function RoomPage({
 
 
   const {
-
     player,
-
     joinedRoomId,
-
     phase,
-
     settings,
-
     players,
-
     drawerId,
-
     secretWord,
-
     revealedWord,
-
     turnPointAwards,
-
     wordChoices,
-
     wordChoiceDeadline,
-
     wordLength,
-
     wordDisplay,
-
     turnEndTime,
-
     canvasActions,
-
     chatMessages,
-
     currentRound,
-
     totalRounds,
-
     finalStandings,
-
     connectionState,
-
     drawerName,
-
     sessionToken,
-
+    applyRoomSnapshot,
   } = useGameStore();
 
 
 
+  const [booting, setBooting] = useState(true);
   const [redirecting, setRedirecting] = useState(false);
 
   const [color, setColor] = useState("#000000");
@@ -129,56 +108,37 @@ export default function RoomPage({
 
 
   useEffect(() => {
-
     if (gateChecked.current) return;
-
     gateChecked.current = true;
 
-
-
     const gate = async () => {
-
       const { player: currentPlayer, joinedRoomId: currentRoomId } =
-
         useGameStore.getState();
 
-
-
       if (currentPlayer && currentRoomId === roomId) {
-
+        setBooting(false);
         return;
-
       }
 
-
-
-      if (currentRoomId) {
-
-        await leaveSession();
-
-      } else {
-
-        useGameStore.getState().clearSession();
-
+      const reconnect = await tryReconnectRoom(roomId);
+      if (reconnect.ok) {
+        if (reconnect.data.snapshot) {
+          applyRoomSnapshot(reconnect.data.snapshot as never);
+        }
+        setBooting(false);
+        return;
       }
 
-
-
+      useGameStore.getState().clearSession();
       setRedirecting(true);
-
       const exists = await checkRoomExists(roomId);
       router.replace(exists ? `/?room=${roomId}` : "/?expired=1");
     };
 
-
-
     void gate();
+  }, [roomId, router, applyRoomSnapshot]);
 
-  }, [roomId, router]);
-
-
-
-  if (redirecting || !player || joinedRoomId !== roomId) {
+  if (booting || redirecting || !player || joinedRoomId !== roomId) {
 
     return (
 

@@ -193,9 +193,7 @@ export function usePusher(
             hasGuessedCorrectly: false,
           })),
         });
-        if (data.drawerId === playerId) {
-          requestResync(roomId);
-        }
+        requestResync(roomId);
       }
     );
 
@@ -304,7 +302,19 @@ export function usePusher(
 
     pusherRef.current = pusher;
 
+    const heartbeat = window.setInterval(() => {
+      void fetch("/api/room/action", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({ type: "ping", roomId }),
+      });
+    }, 45_000);
+
     return () => {
+      window.clearInterval(heartbeat);
       channel.unbind_all();
       pusher.unsubscribe(`private-room-${roomId}`);
       pusher.disconnect();

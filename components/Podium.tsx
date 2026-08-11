@@ -26,7 +26,7 @@ export default function Podium({ standings }: PodiumProps) {
               <span className="text-3xl">{medals[idx]}</span>
               <AvatarDisplay
                 avatar={p.avatar}
-                className="my-2 h-14 w-auto rounded-lg border-2 border-doodle-ink bg-paper-dark"
+                className="my-2 h-14 w-14 rounded-lg"
               />
               <p className="font-sketch text-lg">{p.name}</p>
               <p className="text-sm font-bold text-doodle-grape">{p.score} pts</p>

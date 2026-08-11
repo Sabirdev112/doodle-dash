@@ -172,14 +172,16 @@ export interface SessionPlayer {
 }
 
 export const AVATARS = [
-  "cat",
-  "dog",
-  "fox",
-  "owl",
-  "panda",
-  "robot",
-  "alien",
-  "ghost",
+  "beep",
+  "whiskers",
+  "zorg",
+  "chaos",
+  "explorer",
+  "cool-cat",
+  "sprout",
+  "rocker",
+  "intern",
+  "diva",
 ] as const;
 
 export type AvatarId = (typeof AVATARS)[number];
@@ -190,7 +192,9 @@ export type ReactionEmoji = (typeof REACTION_EMOJIS)[number];
 
 export const ROOM_TTL_MS = 2 * 60 * 60 * 1000;
 /** Treat a player as gone after this long without activity (tab closed, etc.). */
-export const PLAYER_IDLE_MS = 90 * 1000;
+export const PLAYER_IDLE_MS = 5 * 60 * 1000;
+/** Allow reclaiming a name after this long without heartbeat (page refresh). */
+export const PLAYER_RECONNECT_GRACE_MS = 10 * 1000;
 export const WORD_CHOICE_TIMEOUT_MS = 15_000;
 /** Max chat lines kept server-side per room. */
 export const MAX_CHAT_MESSAGES = 200;

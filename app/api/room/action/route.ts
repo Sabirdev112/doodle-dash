@@ -106,6 +106,7 @@ const actionSchema = z.discriminatedUnion("type", [
     text: z.string().max(50),
   }),
   z.object({ type: z.literal("resync"), roomId: z.string(), playerId: z.string().optional() }),
+  z.object({ type: z.literal("ping"), roomId: z.string(), playerId: z.string().optional() }),
   z.object({ type: z.literal("leave"), roomId: z.string(), playerId: z.string().optional() }),
   z.object({
     type: z.literal("reaction"),
@@ -226,6 +227,9 @@ export async function POST(req: NextRequest) {
         }
         const snapshot = await resyncRoom(action.roomId, playerId);
         return NextResponse.json({ ok: true, snapshot });
+      }
+      case "ping": {
+        return NextResponse.json({ ok: true });
       }
       case "leave": {
         leaveRoom(action.roomId, playerId);

@@ -82,7 +82,7 @@ export default function GuessChat({
           >
             <AvatarDisplay
               avatar={msg.avatar}
-              className="mt-0.5 h-6 w-6 shrink-0 rounded border border-doodle-ink/10 bg-paper-dark"
+              className="mt-0.5 h-6 w-6 shrink-0 rounded"
             />
             <div>
               <span className="font-semibold">{msg.playerName}: </span>

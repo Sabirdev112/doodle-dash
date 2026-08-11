@@ -39,7 +39,7 @@ export default function PlayerList({ players, showTurnOrder = false }: PlayerLis
             <div className="relative">
               <AvatarDisplay
                 avatar={player.avatar}
-                className="h-10 w-auto rounded-md border border-doodle-ink/20 bg-paper-dark"
+                className="h-10 w-10 rounded-md"
               />
               {player.hasCrown && (
                 <span className="absolute -right-1 -top-1 text-sm" title="Leader">

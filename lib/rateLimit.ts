@@ -45,7 +45,7 @@ export function checkIpRateLimit(ip: string, action: string, maxPerMinute: numbe
 }
 
 export function checkDrawRateLimit(playerId: string): boolean {
-  return checkRateLimit(`draw:${playerId}`, 120, 60, 1);
+  return checkRateLimit(`draw:${playerId}`, 300, 120, 1);
 }
 
 export function checkGuessRateLimit(playerId: string): boolean {
@@ -57,7 +57,7 @@ export function checkGuessCooldown(playerId: string): boolean {
 }
 
 export function checkResyncRateLimit(playerId: string): boolean {
-  return checkRateLimit(`resync:${playerId}`, 12, 0.2, 1);
+  return checkRateLimit(`resync:${playerId}`, 30, 2, 1);
 }
 
 export function checkUndoRateLimit(playerId: string): boolean {

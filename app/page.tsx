@@ -4,17 +4,16 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import AvatarPicker from "@/components/AvatarPicker";
 import ButtonSpinner from "@/components/ButtonSpinner";
-import { apiCreateRoom, apiJoinRoom, leaveSession, useGameStore } from "@/lib/store";
+import { apiCreateRoom, apiJoinRoom, leaveSession, tryReconnectRoom, useGameStore } from "@/lib/store";
 import {
-  DEFAULT_AVATAR,
-  encodeAvatar,
+  DEFAULT_CHARACTER,
   isValidAvatar,
 } from "@/lib/avatars";
 import { DEFAULT_ROOM_CREATE_OPTIONS, type RoomSnapshot } from "@/lib/types";
 import { sanitizePlayerName } from "@/lib/sanitize";
 import { checkRoomExists, isExpiredRoomError } from "@/lib/roomInvite";
 
-const freshAvatar = () => encodeAvatar(DEFAULT_AVATAR);
+const freshAvatar = () => DEFAULT_CHARACTER;
 
 function LandingContent() {
   const router = useRouter();
@@ -26,7 +25,7 @@ function LandingContent() {
     useGameStore();
 
   const [name, setName] = useState("");
-  const [avatar, setAvatar] = useState(freshAvatar);
+  const [avatar, setAvatar] = useState<string>(freshAvatar);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
@@ -36,6 +35,32 @@ function LandingContent() {
 
     const prepare = async () => {
       setReady(false);
+
+      if (inviteRoomId && !disbanded && !expired) {
+        const exists = await checkRoomExists(inviteRoomId);
+        if (cancelled) return;
+        if (!exists) {
+          router.replace("/?expired=1");
+          return;
+        }
+
+        const reconnect = await tryReconnectRoom(inviteRoomId);
+        if (cancelled) return;
+        if (reconnect.ok) {
+          if (reconnect.data.snapshot) {
+            applyRoomSnapshot(reconnect.data.snapshot as RoomSnapshot);
+          } else {
+            applySnapshot({
+              settings: reconnect.data.settings as never,
+              phase: reconnect.data.phase as never,
+              players: (reconnect.data.players as never) ?? [],
+            });
+          }
+          router.replace(`/room/${inviteRoomId}`);
+          return;
+        }
+      }
+
       const { joinedRoomId } = useGameStore.getState();
       if (joinedRoomId) {
         await leaveSession();
@@ -53,15 +78,6 @@ function LandingContent() {
             : ""
       );
 
-      if (inviteRoomId && !disbanded && !expired) {
-        const exists = await checkRoomExists(inviteRoomId);
-        if (cancelled) return;
-        if (!exists) {
-          router.replace("/?expired=1");
-          return;
-        }
-      }
-
       setReady(true);
     };
 
@@ -69,7 +85,7 @@ function LandingContent() {
     return () => {
       cancelled = true;
     };
-  }, [disbanded, expired, inviteRoomId, router]);
+  }, [disbanded, expired, inviteRoomId, router, applyRoomSnapshot, applySnapshot]);
 
   const saveProfile = (): boolean => {
     const sanitized = sanitizePlayerName(name);
@@ -217,7 +233,7 @@ function LandingContent() {
           </div>
 
           <div>
-            <p className="doodle-label">Build your mug</p>
+            <p className="doodle-label">Pick your character</p>
             <AvatarPicker value={avatar} onChange={setAvatar} />
           </div>
 

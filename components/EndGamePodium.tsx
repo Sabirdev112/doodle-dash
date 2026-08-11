@@ -26,7 +26,7 @@ export default function EndGamePodium({ standings }: EndGamePodiumProps) {
               <span className="text-3xl">{medals[idx]}</span>
               <AvatarDisplay
                 avatar={player.avatar}
-                className="my-2 h-14 w-14 rounded-lg border-2 border-doodle-ink bg-paper-dark"
+                className="my-2 h-14 w-14 rounded-lg"
               />
               <p className="font-sketch text-lg">{player.name}</p>
               <p className="text-sm font-bold text-doodle-grape">{player.score} pts</p>

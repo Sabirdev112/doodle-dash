@@ -31,6 +31,7 @@ import {
   REACTION_EMOJIS,
   MAX_CHAT_MESSAGES,
   MAX_CANVAS_ACTIONS_PER_TURN,
+  PLAYER_RECONNECT_GRACE_MS,
 } from "./types";
 import { buildWordPool, DEFAULT_WORDS } from "./words";
 
@@ -108,17 +109,23 @@ function isPlayerIdle(player: Player): boolean {
   return Date.now() - lastSeen > PLAYER_IDLE_MS;
 }
 
-function findReclaimablePlayerByName(room: Room, name: string): Player | undefined {
+function isPlayerReconnectable(player: Player): boolean {
+  const lastSeen = player.lastSeenAt ?? player.joinedAt;
+  return Date.now() - lastSeen > PLAYER_RECONNECT_GRACE_MS;
+}
+
+function findReconnectablePlayerByName(room: Room, name: string): Player | undefined {
   const key = name.trim().toLowerCase();
   const matches = room.playerOrder
     .map((id) => room.players.get(id))
     .filter(
       (player): player is Player =>
-        !!player &&
-        player.name.trim().toLowerCase() === key &&
-        isPlayerIdle(player)
+        !!player && player.name.trim().toLowerCase() === key
     );
-  return matches.length === 1 ? matches[0] : undefined;
+  if (matches.length !== 1) return undefined;
+  const player = matches[0];
+  if (isPlayerIdle(player) || isPlayerReconnectable(player)) return player;
+  return undefined;
 }
 
 function isNameTaken(room: Room, name: string): boolean {
@@ -353,7 +360,7 @@ export function joinRoom(
   }
 
   if (room.phase !== "waiting") {
-    const reclaim = findReclaimablePlayerByName(room, name);
+    const reclaim = findReconnectablePlayerByName(room, name);
     if (reclaim) {
       reclaim.name = name;
       reclaim.avatar = avatar;
@@ -369,6 +376,18 @@ export function joinRoom(
       error:
         "Game already in progress — use the same name you played with to rejoin.",
     };
+  }
+
+  const reclaim = findReconnectablePlayerByName(room, name);
+  if (reclaim) {
+    reclaim.name = name;
+    reclaim.avatar = avatar;
+    touchPlayer(room, reclaim.id);
+    void triggerRoomEvent(roomId, {
+      event: "player_joined",
+      payload: { player: toPublicPlayer(room, reclaim) },
+    });
+    return { ok: true, room, reconnected: true, playerId: reclaim.id };
   }
 
   if (room.players.size >= room.settings.maxPlayers) {

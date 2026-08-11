@@ -15,6 +15,11 @@ import type {
   TurnPointAward,
 } from "@/lib/types";
 import { applyCanvasStrokeUpdates } from "./canvasStrokes";
+import {
+  clearPersistedSession,
+  loadPersistedSession,
+  savePersistedSession,
+} from "./persistedSession";
 
 interface GameStore {
   player: SessionPlayer | null;
@@ -44,6 +49,7 @@ interface GameStore {
   drawerName: string;
 
   initPlayer: (name: string, avatar: string) => void;
+  restorePlayer: (player: SessionPlayer) => void;
   setSessionToken: (token: string | null) => void;
   setJoinedRoom: (roomId: string | null) => void;
   setConnectionState: (state: GameStore["connectionState"]) => void;
@@ -104,9 +110,31 @@ export const useGameStore = create<GameStore>()((set, get) => ({
     set({ player: { id: nanoid(), name, avatar }, sessionToken: null });
   },
 
-  setSessionToken: (sessionToken) => set({ sessionToken }),
+  restorePlayer: (player) => set({ player }),
 
-  setJoinedRoom: (joinedRoomId) => set({ joinedRoomId }),
+  setSessionToken: (sessionToken) => {
+    set({ sessionToken });
+    const { player, joinedRoomId } = get();
+    if (player && joinedRoomId && sessionToken) {
+      savePersistedSession({
+        ...player,
+        sessionToken,
+        joinedRoomId,
+      });
+    }
+  },
+
+  setJoinedRoom: (joinedRoomId) => {
+    set({ joinedRoomId });
+    const { player, sessionToken } = get();
+    if (player && joinedRoomId && sessionToken) {
+      savePersistedSession({
+        ...player,
+        sessionToken,
+        joinedRoomId,
+      });
+    }
+  },
 
   setConnectionState: (connectionState) => set({ connectionState }),
 
@@ -195,7 +223,10 @@ export const useGameStore = create<GameStore>()((set, get) => ({
 
   resetRoom: () => set({ ...roomState, player: get().player }),
 
-  clearSession: () => set({ player: null, ...roomState }),
+  clearSession: () => {
+    clearPersistedSession();
+    set({ player: null, ...roomState });
+  },
 
   applyRoomSnapshot: (snapshot) =>
     set((state) => ({
@@ -313,8 +344,40 @@ export async function apiJoinRoom(
   if (sessionToken) {
     useGameStore.getState().setSessionToken(sessionToken);
   }
+  useGameStore.getState().setJoinedRoom(roomId);
+  const state = useGameStore.getState();
+  if (state.player && state.sessionToken) {
+    savePersistedSession({
+      ...state.player,
+      sessionToken: state.sessionToken,
+      joinedRoomId: roomId,
+    });
+  }
 
   return { ok: true, data };
+}
+
+export async function tryReconnectRoom(
+  roomId: string
+): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; error: string }> {
+  const stored = loadPersistedSession();
+  if (!stored || stored.joinedRoomId !== roomId) {
+    return { ok: false, error: "No saved session" };
+  }
+
+  useGameStore.setState({
+    player: { id: stored.id, name: stored.name, avatar: stored.avatar },
+    sessionToken: stored.sessionToken,
+    joinedRoomId: stored.joinedRoomId,
+  });
+
+  const player = { id: stored.id, name: stored.name, avatar: stored.avatar };
+  const result = await apiJoinRoom(roomId, player);
+  if (!result.ok) {
+    clearPersistedSession();
+    useGameStore.getState().clearSession();
+  }
+  return result;
 }
 
 export async function apiCreateRoom(
@@ -336,6 +399,16 @@ export async function apiCreateRoom(
   const sessionToken = data.sessionToken as string | undefined;
   if (sessionToken) {
     useGameStore.getState().setSessionToken(sessionToken);
+  }
+  const roomId = data.roomId as string;
+  useGameStore.getState().setJoinedRoom(roomId);
+  const state = useGameStore.getState();
+  if (state.player && state.sessionToken) {
+    savePersistedSession({
+      ...state.player,
+      sessionToken: state.sessionToken,
+      joinedRoomId: roomId,
+    });
   }
   return { ok: true, data };
 }
