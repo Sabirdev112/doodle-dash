@@ -345,7 +345,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
   return (
     <div
       ref={containerRef}
-      className="relative aspect-[4/3] w-full overflow-hidden rounded-2xl border-2 border-slate-700 bg-white shadow-inner"
+      className="relative aspect-[4/3] w-full overflow-hidden rounded-xl border-[3px] border-doodle-ink bg-white shadow-sketch"
     >
       <canvas ref={bgRef} className="absolute inset-0 h-full w-full" />
       <canvas

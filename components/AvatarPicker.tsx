@@ -9,22 +9,23 @@ interface AvatarPickerProps {
 
 export default function AvatarPicker({ selected, onSelect }: AvatarPickerProps) {
   return (
-    <div className="grid grid-cols-4 gap-3 sm:grid-cols-8">
-      {AVATARS.map((avatar) => (
+    <div className="grid grid-cols-4 gap-2.5 sm:grid-cols-8">
+      {AVATARS.map((avatar, i) => (
         <button
           key={avatar}
           type="button"
           onClick={() => onSelect(avatar)}
-          className={`flex h-16 w-16 items-center justify-center rounded-2xl border-2 bg-slate-800 transition hover:scale-105 ${
+          style={{ transform: `rotate(${i % 2 === 0 ? -2 : 2}deg)` }}
+          className={`flex h-14 w-14 items-center justify-center rounded-lg border-2 bg-white transition hover:scale-105 sm:h-16 sm:w-16 ${
             selected === avatar
-              ? "border-brand-400 ring-2 ring-brand-400/50"
-              : "border-slate-700 hover:border-slate-500"
+              ? "border-doodle-grape bg-doodle-yellow/40 shadow-sketch-sm"
+              : "border-doodle-ink/40 hover:border-doodle-ink"
           }`}
         >
           <img
             src={`/avatars/${avatar}.svg`}
             alt={avatar}
-            className="h-10 w-10"
+            className="h-9 w-9 sm:h-10 sm:w-10"
           />
         </button>
       ))}

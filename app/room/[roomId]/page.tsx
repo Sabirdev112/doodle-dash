@@ -51,7 +51,7 @@ export default function RoomPage({
   const [brushSize, setBrushSize] = useState(8);
   const [tool, setTool] = useState<Tool>("brush");
 
-  usePusher(roomId, player?.id ?? "");
+  usePusher(joined ? roomId : "", player?.id ?? "");
 
   useEffect(() => {
     if (!player) {
@@ -109,14 +109,14 @@ export default function RoomPage({
   if (joinError) {
     return (
       <main className="flex min-h-screen items-center justify-center px-4">
-        <div className="rounded-2xl border border-red-500/30 bg-slate-900 p-8 text-center">
-          <p className="text-red-300">{joinError}</p>
+        <div className="doodle-card max-w-md p-8 text-center">
+          <p className="text-doodle-coral">{joinError}</p>
           <button
             type="button"
             onClick={() => router.push("/")}
-            className="mt-4 rounded-xl bg-brand-500 px-6 py-2 text-white"
+            className="doodle-btn-primary mt-4"
           >
-            Go Home
+            Go home
           </button>
         </div>
       </main>
@@ -126,7 +126,7 @@ export default function RoomPage({
   if (!joined) {
     return (
       <main className="flex min-h-screen items-center justify-center">
-        <div className="h-10 w-10 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
+        <div className="h-10 w-10 animate-spin rounded-full border-2 border-doodle-ink border-t-transparent" />
       </main>
     );
   }
@@ -141,14 +141,14 @@ export default function RoomPage({
       <div className="mx-auto max-w-7xl">
         <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="text-xl font-bold text-white">
+            <h1 className="font-sketch text-2xl text-doodle-ink">
               Doodle Dash
-              <span className="ml-2 text-sm font-normal text-slate-500">
-                Room {roomId}
+              <span className="ml-2 font-body text-sm font-normal text-doodle-muted">
+                · {roomId}
               </span>
             </h1>
             {phase !== "waiting" && phase !== "ended" && (
-              <p className="text-sm text-slate-400">
+              <p className="text-sm text-doodle-muted">
                 Round {currentRound}/{totalRounds}
                 {drawerName && ` · ${drawerName} is drawing`}
               </p>
@@ -156,13 +156,11 @@ export default function RoomPage({
           </div>
           <div className="flex items-center gap-3">
             {connectionState !== "connected" && (
-              <span className="rounded-full bg-amber-500/20 px-3 py-1 text-xs text-amber-300">
-                {connectionState === "connecting" ? "Connecting..." : "Reconnecting..."}
+              <span className="rounded-lg border-2 border-doodle-ink/30 bg-doodle-yellow/40 px-3 py-1 font-sketch text-sm">
+                {connectionState === "connecting" ? "Connecting…" : "Reconnecting…"}
               </span>
             )}
-            {phase === "drawing" && (
-              <RoundTimer endTime={turnEndTime} />
-            )}
+            {phase === "drawing" && <RoundTimer endTime={turnEndTime} />}
           </div>
         </header>
 
@@ -193,9 +191,9 @@ export default function RoomPage({
           <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
             <div className="space-y-4">
               {phase === "turn_end" && (
-                <div className="rounded-xl bg-brand-500/10 px-4 py-3 text-center text-brand-200">
-                  Time&apos;s up! The word was:{" "}
-                  <strong>{secretWord ?? "???"}</strong>
+                <div className="doodle-card px-4 py-3 text-center font-sketch text-lg text-doodle-ink">
+                  Time&apos;s up! It was{" "}
+                  <strong className="text-doodle-grape">{secretWord ?? "???"}</strong>
                 </div>
               )}
               <Canvas
@@ -221,7 +219,7 @@ export default function RoomPage({
               />
             </div>
             <div className="flex flex-col gap-4">
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
+              <div className="doodle-card p-4">
                 <Scoreboard players={players} />
               </div>
               <div className="min-h-[300px] flex-1">
@@ -236,7 +234,7 @@ export default function RoomPage({
                   disabled={phase !== "drawing"}
                 />
               </div>
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
+              <div className="doodle-card p-4">
                 <PlayerList players={players} />
               </div>
             </div>

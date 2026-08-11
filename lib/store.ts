@@ -36,8 +36,13 @@ interface GameStore {
   connectionState: "connected" | "connecting" | "disconnected";
   drawerName: string;
 
+  hostRoomId: string | null;
+  hostLobbyReady: boolean;
+
   initPlayer: (name: string, avatar: AvatarId) => void;
   setRoomId: (roomId: string) => void;
+  setHostRoom: (roomId: string) => void;
+  setHostLobbyReady: (ready: boolean) => void;
   setConnectionState: (state: GameStore["connectionState"]) => void;
   applySnapshot: (snapshot: Partial<GameStore>) => void;
   addPlayer: (player: PublicPlayer) => void;
@@ -73,6 +78,8 @@ const initialState = {
   finalStandings: null as PublicPlayer[] | null,
   connectionState: "connecting" as const,
   drawerName: "",
+  hostRoomId: null as string | null,
+  hostLobbyReady: false,
 };
 
 export const useGameStore = create<GameStore>()(
@@ -88,6 +95,10 @@ export const useGameStore = create<GameStore>()(
       },
 
       setRoomId: (roomId) => set({ roomId }),
+
+      setHostRoom: (roomId) => set({ hostRoomId: roomId, roomId }),
+
+      setHostLobbyReady: (ready) => set({ hostLobbyReady: ready }),
 
       setConnectionState: (connectionState) => set({ connectionState }),
 
@@ -147,7 +158,11 @@ export const useGameStore = create<GameStore>()(
     }),
     {
       name: "doodle-dash-session",
-      partialize: (state) => ({ player: state.player }),
+      partialize: (state) => ({
+        player: state.player,
+        hostRoomId: state.hostRoomId,
+        hostLobbyReady: state.hostLobbyReady,
+      }),
     }
   )
 );

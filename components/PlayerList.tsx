@@ -9,20 +9,18 @@ interface PlayerListProps {
 export default function PlayerList({ players }: PlayerListProps) {
   return (
     <div className="space-y-2">
-      <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
-        Players
-      </h3>
+      <h3 className="font-sketch text-lg text-doodle-ink">Who&apos;s here</h3>
       <ul className="space-y-2">
         {players.map((player) => (
           <li
             key={player.id}
-            className="flex items-center gap-3 rounded-xl bg-slate-800/60 px-3 py-2"
+            className="flex items-center gap-3 rounded-lg border-2 border-doodle-ink/15 bg-white px-3 py-2"
           >
             <div className="relative">
               <img
                 src={`/avatars/${player.avatar}.svg`}
                 alt=""
-                className="h-9 w-9 rounded-lg bg-slate-700"
+                className="h-9 w-9 rounded-md border border-doodle-ink/20 bg-paper-dark"
               />
               {player.hasCrown && (
                 <span className="absolute -right-1 -top-1 text-sm" title="Leader">
@@ -31,20 +29,20 @@ export default function PlayerList({ players }: PlayerListProps) {
               )}
             </div>
             <div className="min-w-0 flex-1">
-              <p className="truncate font-medium text-slate-100">
+              <p className="truncate font-semibold text-doodle-ink">
                 {player.name}
                 {player.isOwner && (
-                  <span className="ml-2 rounded-full bg-accent-500/20 px-2 py-0.5 text-xs text-accent-400">
-                    Owner
+                  <span className="ml-2 rounded-md border border-doodle-grape/40 bg-doodle-grape/15 px-1.5 py-0.5 font-sketch text-xs font-normal text-doodle-grape">
+                    host
                   </span>
                 )}
                 {player.isDrawer && (
-                  <span className="ml-2 rounded-full bg-brand-500/20 px-2 py-0.5 text-xs text-brand-300">
-                    Drawing
+                  <span className="ml-2 rounded-md border border-doodle-sky/40 bg-doodle-sky/20 px-1.5 py-0.5 font-sketch text-xs font-normal text-doodle-ink">
+                    drawing
                   </span>
                 )}
               </p>
-              <p className="text-xs text-slate-400">{player.score} pts</p>
+              <p className="text-xs text-doodle-muted">{player.score} pts</p>
             </div>
           </li>
         ))}

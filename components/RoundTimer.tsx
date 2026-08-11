@@ -12,11 +12,9 @@ export default function RoundTimer({ endTime, label = "Time left" }: RoundTimerP
 
   useEffect(() => {
     if (!endTime) return;
-
     const tick = () => {
       setRemaining(Math.max(0, Math.ceil((endTime - Date.now()) / 1000)));
     };
-
     tick();
     const interval = setInterval(tick, 250);
     return () => clearInterval(interval);
@@ -26,12 +24,16 @@ export default function RoundTimer({ endTime, label = "Time left" }: RoundTimerP
 
   return (
     <div
-      className={`rounded-xl px-4 py-2 text-center ${
-        urgent ? "bg-red-500/20 animate-pulse" : "bg-slate-800/80"
+      className={`rounded-lg border-2 border-doodle-ink px-4 py-2 text-center shadow-sketch-sm ${
+        urgent ? "animate-pulse bg-doodle-coral/20" : "bg-doodle-yellow/50"
       }`}
     >
-      <p className="text-xs uppercase tracking-wide text-slate-400">{label}</p>
-      <p className={`text-2xl font-bold tabular-nums ${urgent ? "text-red-400" : "text-brand-300"}`}>
+      <p className="font-sketch text-xs uppercase text-doodle-muted">{label}</p>
+      <p
+        className={`font-sketch text-2xl tabular-nums ${
+          urgent ? "text-doodle-coral" : "text-doodle-ink"
+        }`}
+      >
         {endTime ? `${remaining}s` : "—"}
       </p>
     </div>

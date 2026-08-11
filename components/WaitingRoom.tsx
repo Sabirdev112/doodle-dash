@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { PublicPlayer } from "@/lib/types";
 import PlayerList from "./PlayerList";
+import CopyLinkButton from "./CopyLinkButton";
 import { sendAction } from "@/lib/store";
 
 interface WaitingRoomProps {
@@ -20,18 +21,11 @@ export default function WaitingRoom({
   isOwner,
   maxPlayers,
 }: WaitingRoomProps) {
-  const [copied, setCopied] = useState(false);
   const [starting, setStarting] = useState(false);
   const inviteUrl =
     typeof window !== "undefined"
-      ? `${window.location.origin}/?room=${roomId}`
+      ? `${window.location.origin}/room/${roomId}`
       : `/room/${roomId}`;
-
-  const copyLink = async () => {
-    await navigator.clipboard.writeText(inviteUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
 
   const startGame = async () => {
     setStarting(true);
@@ -40,59 +34,85 @@ export default function WaitingRoom({
   };
 
   const disbandRoom = async () => {
+    if (!confirm("Disband this room? The invite link will stop working.")) return;
     await sendAction({ type: "disband_room", roomId, playerId });
     window.location.href = "/";
   };
 
   return (
-    <div className="mx-auto max-w-lg space-y-6 rounded-2xl border border-slate-800 bg-slate-900/80 p-6 shadow-xl">
-      <div className="text-center">
-        <h2 className="text-2xl font-bold text-white">Waiting Room</h2>
-        <p className="mt-1 text-slate-400">
-          {players.length}/{maxPlayers} players · Room {roomId}
+    <div className="mx-auto max-w-lg space-y-5">
+      <div className="doodle-card wobble-left p-6 text-center">
+        <p className="font-sketch text-sm uppercase tracking-wide text-doodle-muted">
+          Room lobby
+        </p>
+        <h2 className="mt-1 font-sketch text-4xl text-doodle-ink">Almost ready!</h2>
+        <p className="mt-2 text-sm text-doodle-muted">
+          {players.length}/{maxPlayers} players · code{" "}
+          <span className="rounded bg-paper-dark px-2 py-0.5 font-mono font-bold text-doodle-ink">
+            {roomId}
+          </span>
         </p>
       </div>
 
-      <PlayerList players={players} />
+      <div className="doodle-card space-y-4 p-5">
+        <div>
+          <h3 className="font-sketch text-xl text-doodle-ink">Invite friends first</h3>
+          <p className="mt-1 text-sm text-doodle-muted">
+            Share the link below. Nothing starts until someone hits{" "}
+            <strong>Start game</strong>.
+          </p>
+        </div>
+        <CopyLinkButton url={inviteUrl} />
+        <p className="break-all rounded-lg border border-dashed border-doodle-ink/30 bg-paper-dark px-3 py-2 text-center text-xs text-doodle-muted">
+          {inviteUrl}
+        </p>
+      </div>
 
-      <div className="flex flex-col gap-3">
-        <button
-          type="button"
-          onClick={copyLink}
-          className="rounded-xl bg-slate-800 px-4 py-3 text-sm font-medium text-slate-200 transition hover:bg-slate-700"
-        >
-          {copied ? "Link copied!" : "Copy invite link"}
-        </button>
+      <div className="doodle-card p-5">
+        <PlayerList players={players} />
+      </div>
 
-        {isOwner ? (
-          <>
+      {isOwner ? (
+        <div className="space-y-3">
+          <div className="border-t-2 border-dashed border-doodle-ink/20 pt-4">
+            <p className="mb-3 text-center font-sketch text-lg text-doodle-muted">
+              Everyone here? Start when you&apos;re ready ↓
+            </p>
             <button
               type="button"
               onClick={startGame}
               disabled={players.length < 2 || starting}
-              className="rounded-xl bg-brand-500 px-4 py-3 font-semibold text-white transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+              className="doodle-btn-coral w-full"
             >
-              {starting ? "Starting..." : "Start Game"}
-            </button>
-            <button
-              type="button"
-              onClick={disbandRoom}
-              className="rounded-xl border border-red-500/30 px-4 py-2 text-sm text-red-400 transition hover:bg-red-500/10"
-            >
-              Disband Room
+              {starting ? "Starting..." : "Start game"}
             </button>
             {players.length < 2 && (
-              <p className="text-center text-sm text-amber-400">
-                Need at least 2 players to start
+              <p className="mt-2 text-center text-sm text-doodle-coral">
+                Need at least 2 players — send the link to a friend!
               </p>
             )}
-          </>
-        ) : (
-          <p className="text-center text-sm text-slate-400">
-            Waiting for the owner to start the game...
+          </div>
+          <button
+            type="button"
+            onClick={disbandRoom}
+            className="w-full py-2 text-sm text-doodle-muted underline hover:text-doodle-coral"
+          >
+            Disband room
+          </button>
+        </div>
+      ) : (
+        <div className="doodle-card p-4 text-center">
+          <p className="font-sketch text-lg text-doodle-muted">
+            Hang tight — waiting for the host to start…
           </p>
-        )}
-      </div>
+          <CopyLinkButton
+            url={inviteUrl}
+            label="Copy link for another friend"
+            variant="secondary"
+            className="mt-3"
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -25,11 +25,11 @@ export default function WordSelect({
 
   if (!isDrawer) {
     return (
-      <div className="flex flex-col items-center justify-center rounded-2xl border border-slate-800 bg-slate-900/90 p-8 text-center">
-        <p className="text-lg text-slate-300">
-          {drawerName} is choosing a word...
+      <div className="doodle-card mx-auto max-w-md p-8 text-center">
+        <p className="font-sketch text-2xl text-doodle-ink">
+          {drawerName} is picking a word…
         </p>
-        <div className="mt-4 h-8 w-8 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
+        <div className="mx-auto mt-4 h-8 w-8 animate-spin rounded-full border-2 border-doodle-ink border-t-transparent" />
       </div>
     );
   }
@@ -39,12 +39,12 @@ export default function WordSelect({
     : 15;
 
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-6">
-      <h3 className="mb-2 text-center text-lg font-semibold text-white">
-        Choose a word to draw
+    <div className="doodle-card mx-auto max-w-lg p-6">
+      <h3 className="text-center font-sketch text-2xl text-doodle-ink">
+        Pick something to draw
       </h3>
-      <p className="mb-4 text-center text-sm text-slate-400">
-        {secondsLeft}s remaining
+      <p className="mb-4 text-center text-sm text-doodle-muted">
+        {secondsLeft}s or we pick for you
       </p>
       <div className="flex flex-wrap justify-center gap-3">
         {choices.map((word) => (
@@ -52,7 +52,7 @@ export default function WordSelect({
             key={word}
             type="button"
             onClick={() => pick(word)}
-            className="rounded-xl bg-brand-500/20 px-6 py-3 font-medium text-brand-200 transition hover:bg-brand-500 hover:text-white"
+            className="doodle-btn-secondary hover:bg-doodle-mint/30"
           >
             {word}
           </button>

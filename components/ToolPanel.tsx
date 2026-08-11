@@ -3,16 +3,15 @@
 export type Tool = "brush" | "eraser" | "fill";
 
 export const COLORS = [
-  "#000000",
+  "#2c2416",
   "#ffffff",
-  "#ef4444",
-  "#f97316",
-  "#eab308",
-  "#22c55e",
-  "#3b82f6",
-  "#8b5cf6",
-  "#ec4899",
-  "#78716c",
+  "#ff6b6b",
+  "#ffd166",
+  "#06d6a0",
+  "#4cc9f0",
+  "#9b5de5",
+  "#f15bb5",
+  "#8b7355",
 ];
 
 interface ToolPanelProps {
@@ -38,26 +37,26 @@ export default function ToolPanel({
 }: ToolPanelProps) {
   if (disabled) {
     return (
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-4 opacity-50">
-        <p className="text-center text-sm text-slate-500">
-          Drawing tools (drawer only)
+      <div className="doodle-card p-4 opacity-60">
+        <p className="text-center font-sketch text-doodle-muted">
+          Sit tight — only the drawer can scribble
         </p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
+    <div className="doodle-card space-y-4 p-4">
       <div className="flex flex-wrap gap-2">
         {(["brush", "eraser", "fill"] as Tool[]).map((t) => (
           <button
             key={t}
             type="button"
             onClick={() => onToolChange(t)}
-            className={`rounded-lg px-3 py-1.5 text-sm capitalize ${
+            className={`rounded-md border-2 px-3 py-1 font-sketch text-base capitalize ${
               tool === t
-                ? "bg-brand-500 text-white"
-                : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+                ? "border-doodle-ink bg-doodle-yellow shadow-sketch-sm"
+                : "border-doodle-ink/30 bg-white hover:border-doodle-ink"
             }`}
           >
             {t}
@@ -66,9 +65,9 @@ export default function ToolPanel({
         <button
           type="button"
           onClick={onUndo}
-          className="ml-auto rounded-lg bg-slate-800 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-700"
+          className="ml-auto rounded-md border-2 border-doodle-ink/30 bg-white px-3 py-1 font-sketch hover:border-doodle-ink"
         >
-          Undo
+          undo
         </button>
       </div>
 
@@ -80,7 +79,7 @@ export default function ToolPanel({
             onClick={() => onColorChange(c)}
             style={{ backgroundColor: c }}
             className={`h-7 w-7 rounded-full border-2 ${
-              color === c ? "border-brand-400 scale-110" : "border-slate-600"
+              color === c ? "border-doodle-ink scale-110 shadow-sketch-sm" : "border-doodle-ink/40"
             }`}
           />
         ))}
@@ -88,14 +87,14 @@ export default function ToolPanel({
           type="color"
           value={color}
           onChange={(e) => onColorChange(e.target.value)}
-          className="h-7 w-7 cursor-pointer rounded border-0 bg-transparent"
+          className="h-7 w-7 cursor-pointer rounded border-2 border-doodle-ink/30"
           title="Custom color"
         />
       </div>
 
       <div>
-        <label className="mb-1 block text-xs text-slate-400">
-          Brush size: {size}px
+        <label className="font-sketch text-sm text-doodle-muted">
+          Thickness: {size}px
         </label>
         <input
           type="range"
@@ -103,7 +102,7 @@ export default function ToolPanel({
           max={30}
           value={size}
           onChange={(e) => onSizeChange(Number(e.target.value))}
-          className="w-full accent-brand-500"
+          className="mt-1 w-full accent-doodle-grape"
         />
       </div>
     </div>

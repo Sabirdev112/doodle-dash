@@ -21,6 +21,7 @@ export function usePusher(roomId: string, playerId: string) {
   } = useGameStore();
 
   useEffect(() => {
+    if (!roomId || !playerId) return;
     const key = process.env.NEXT_PUBLIC_PUSHER_KEY;
     const cluster = process.env.NEXT_PUBLIC_PUSHER_CLUSTER;
     if (!key || !cluster) return;
@@ -92,6 +93,11 @@ export function usePusher(roomId: string, playerId: string) {
           canvasActions: [],
           secretWord: null,
           wordChoices: [],
+          players: useGameStore.getState().players.map((p) => ({
+            ...p,
+            isDrawer: p.id === data.drawerId,
+            hasGuessedCorrectly: false,
+          })),
         });
         if (data.drawerId === playerId) {
           void fetch("/api/room/action", {
@@ -117,6 +123,11 @@ export function usePusher(roomId: string, playerId: string) {
           secretWord: null,
           turnEndTime: data.turnEndTime,
           wordChoices: [],
+          players: useGameStore.getState().players.map((p) => ({
+            ...p,
+            isDrawer: p.id === data.drawerId,
+            hasGuessedCorrectly: false,
+          })),
         });
         if (data.drawerId === playerId) {
           void fetch("/api/room/action", {
@@ -146,6 +157,15 @@ export function usePusher(roomId: string, playerId: string) {
 
     channel.bind("guess_result", (data: Parameters<typeof addChatMessage>[0]) => {
       addChatMessage(data);
+      if (data.kind === "correct") {
+        applySnapshot({
+          players: useGameStore.getState().players.map((p) =>
+            p.id === data.playerId
+              ? { ...p, hasGuessedCorrectly: true }
+              : p
+          ),
+        });
+      }
     });
 
     channel.bind(

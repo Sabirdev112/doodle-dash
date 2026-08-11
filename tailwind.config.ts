@@ -8,24 +8,30 @@ const config: Config = {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sketch: ["var(--font-sketch)", "cursive"],
+        body: ["var(--font-body)", "system-ui", "sans-serif"],
+      },
       colors: {
-        brand: {
-          50: "#f0f9ff",
-          100: "#e0f2fe",
-          200: "#bae6fd",
-          300: "#7dd3fc",
-          400: "#38bdf8",
-          500: "#0ea5e9",
-          600: "#0284c7",
-          700: "#0369a1",
-          800: "#075985",
-          900: "#0c4a6e",
+        paper: {
+          DEFAULT: "#fff8eb",
+          dark: "#f5ecd8",
+          line: "#2c2416",
         },
-        accent: {
-          400: "#a78bfa",
-          500: "#8b5cf6",
-          600: "#7c3aed",
+        doodle: {
+          yellow: "#ffd166",
+          coral: "#ff6b6b",
+          mint: "#06d6a0",
+          sky: "#4cc9f0",
+          grape: "#9b5de5",
+          ink: "#2c2416",
+          muted: "#6b5c4c",
         },
+      },
+      boxShadow: {
+        sketch: "3px 3px 0 0 #2c2416",
+        "sketch-sm": "2px 2px 0 0 #2c2416",
+        "sketch-lg": "5px 5px 0 0 #2c2416",
       },
     },
   },
