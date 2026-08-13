@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ButtonSpinner from "./ButtonSpinner";
-import { sendAction, useGameStore } from "@/lib/store";
+import { sendAction, useGameStore, requestRoomResync } from "@/lib/store";
 import type { RoomSnapshot } from "@/lib/types";
 
 interface WordSelectProps {
@@ -26,7 +26,23 @@ export default function WordSelect({
   embedded = false,
 }: WordSelectProps) {
   const [picking, setPicking] = useState<string | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState(() =>
+    deadline ? Math.max(0, Math.ceil((deadline - Date.now()) / 1000)) : 15
+  );
   const applyRoomSnapshot = useGameStore((s) => s.applyRoomSnapshot);
+
+  useEffect(() => {
+    if (!deadline) {
+      setSecondsLeft(15);
+      return;
+    }
+    const tick = () => {
+      setSecondsLeft(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
+    };
+    tick();
+    const interval = window.setInterval(tick, 250);
+    return () => window.clearInterval(interval);
+  }, [deadline]);
 
   const pick = async (word: string) => {
     if (picking) return;
@@ -35,6 +51,10 @@ export default function WordSelect({
     const data = await res.json();
     if (res.ok && data.ok && data.snapshot) {
       applyRoomSnapshot(data.snapshot as RoomSnapshot);
+    } else if (res.ok && data.ok) {
+      await requestRoomResync(roomId);
+    } else {
+      await requestRoomResync(roomId);
     }
     setPicking(null);
   };
@@ -49,10 +69,6 @@ export default function WordSelect({
       </div>
     );
   }
-
-  const secondsLeft = deadline
-    ? Math.max(0, Math.ceil((deadline - Date.now()) / 1000))
-    : 15;
 
   const content = (
     <>

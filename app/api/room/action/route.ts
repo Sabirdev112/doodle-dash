@@ -97,6 +97,7 @@ const actionSchema = z.discriminatedUnion("type", [
     roomId: z.string(),
     playerId: z.string().optional(),
     strokes: z.array(strokeSchema).min(1).max(10),
+    seq: z.number().int().min(1).max(1_000_000).optional(),
   }),
   z.object({
     type: z.literal("fill"),
@@ -162,7 +163,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Not a room member" }, { status: 403 });
     }
 
-    if (action.type !== "leave") {
+    if (action.type !== "leave" && action.type !== "draw_strokes" && action.type !== "ping") {
       await touchPlayerActivity(action.roomId, playerId);
     }
 
@@ -204,8 +205,12 @@ export async function POST(req: NextRequest) {
         if (!checkDrawRateLimit(playerId)) {
           return NextResponse.json({ ok: false, dropped: true });
         }
-        const ok = await handleDrawStrokes(action.roomId, playerId, action.strokes);
-        if (ok) await saveRoomState(action.roomId);
+        const ok = await handleDrawStrokes(
+          action.roomId,
+          playerId,
+          action.strokes,
+          action.seq
+        );
         return NextResponse.json({ ok });
       }
       case "fill": {

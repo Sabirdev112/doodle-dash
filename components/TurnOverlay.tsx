@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import AvatarDisplay from "@/components/AvatarDisplay";
 import WordSelect from "@/components/WordSelect";
 import type { GamePhase, TurnPointAward } from "@/lib/types";
+import { TURN_END_HOLD_MS } from "@/lib/types";
 
 const EXIT_ANIMATIONS = [
   "overlay-exit-up",
@@ -13,6 +14,7 @@ const EXIT_ANIMATIONS = [
 ] as const;
 
 interface TurnOverlayProps {
+  turnId: string;
   phase: GamePhase;
   revealedWord: string | null;
   turnPointAwards: TurnPointAward[];
@@ -25,6 +27,7 @@ interface TurnOverlayProps {
 }
 
 export default function TurnOverlay({
+  turnId,
   phase,
   revealedWord,
   turnPointAwards,
@@ -36,9 +39,14 @@ export default function TurnOverlay({
   drawerName,
 }: TurnOverlayProps) {
   const prevPhase = useRef<GamePhase>(phase);
-  const [visible, setVisible] = useState(false);
-  const [scoresMinDone, setScoresMinDone] = useState(false);
+  const [visible, setVisible] = useState(
+    phase === "turn_end" || phase === "word_select"
+  );
+  const [scoresMinDone, setScoresMinDone] = useState(
+    phase === "word_select" && !revealedWord
+  );
   const [exitAnim, setExitAnim] = useState<string | null>(null);
+  const scoresTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const exitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showTurnSummary =
@@ -54,45 +62,58 @@ export default function TurnOverlay({
     (scoresMinDone || !revealedWord);
 
   useEffect(() => {
+    const clearTimers = () => {
+      if (scoresTimer.current) {
+        clearTimeout(scoresTimer.current);
+        scoresTimer.current = null;
+      }
+      if (exitTimer.current) {
+        clearTimeout(exitTimer.current);
+        exitTimer.current = null;
+      }
+    };
+
+    clearTimers();
+
     if (phase === "turn_end") {
       setVisible(true);
       setExitAnim(null);
       setScoresMinDone(false);
-      const timer = setTimeout(() => setScoresMinDone(true), 3000);
-      return () => clearTimeout(timer);
-    }
-
-    if (phase === "word_select") {
+      scoresTimer.current = setTimeout(
+        () => setScoresMinDone(true),
+        TURN_END_HOLD_MS
+      );
+    } else if (phase === "word_select") {
       setVisible(true);
       setExitAnim(null);
-      if (!revealedWord) {
+      if (!revealedWord || prevPhase.current !== "turn_end") {
         setScoresMinDone(true);
+      } else {
+        setScoresMinDone(false);
+        scoresTimer.current = setTimeout(
+          () => setScoresMinDone(true),
+          TURN_END_HOLD_MS
+        );
       }
-    }
-
-    if (
+    } else if (
       phase === "drawing" &&
       (prevPhase.current === "word_select" || prevPhase.current === "turn_end")
     ) {
       const anim =
         EXIT_ANIMATIONS[Math.floor(Math.random() * EXIT_ANIMATIONS.length)];
       setExitAnim(anim);
-      if (exitTimer.current) clearTimeout(exitTimer.current);
       exitTimer.current = setTimeout(() => {
         setVisible(false);
         setExitAnim(null);
       }, 650);
+    } else {
+      setVisible(false);
+      setExitAnim(null);
     }
 
     prevPhase.current = phase;
-  }, [phase, revealedWord]);
-
-  useEffect(
-    () => () => {
-      if (exitTimer.current) clearTimeout(exitTimer.current);
-    },
-    []
-  );
+    return clearTimers;
+  }, [phase, revealedWord, turnId]);
 
   if (!visible) return null;
 

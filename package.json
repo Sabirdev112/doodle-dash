@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@upstash/redis": "^1.38.2",
+    "dotenv": "^17.4.2",
     "nanoid": "^5.0.9",
     "next": "^15.1.0",
     "pusher": "^5.2.0",

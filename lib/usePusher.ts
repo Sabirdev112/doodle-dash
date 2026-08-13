@@ -3,12 +3,15 @@
 import { useEffect, useRef } from "react";
 import PusherClient from "pusher-js";
 import { useGameStore } from "@/lib/store";
+import { setLiveDrawChannel } from "@/lib/liveDrawing";
+import { createStrokeOrderBuffer } from "@/lib/strokeOrder";
 import type {
   CanvasAction,
   ChatMessage,
   PublicPlayer,
   ReactionEvent,
   RoomSnapshot,
+  StrokeAction,
   TurnPointAward,
 } from "@/lib/types";
 
@@ -43,6 +46,9 @@ export function usePusher(
   const storeRef = useRef(useGameStore.getState());
   const pendingStrokeBatch = useRef<Extract<CanvasAction, { type: "stroke" }>[]>([]);
   const strokeFlushRaf = useRef<number | null>(null);
+  const strokeOrderRef = useRef<ReturnType<typeof createStrokeOrderBuffer> | null>(
+    null
+  );
 
   useEffect(() => {
     storeRef.current = useGameStore.getState();
@@ -87,8 +93,27 @@ export function usePusher(
 
     const channel = pusher.subscribe(`private-room-${roomId}`);
 
+    const flushPendingStrokes = (strokes: StrokeAction[]) => {
+      if (strokes.length === 0) return;
+      pendingStrokeBatch.current.push(...strokes);
+      if (strokeFlushRaf.current !== null) return;
+
+      strokeFlushRaf.current = requestAnimationFrame(() => {
+        strokeFlushRaf.current = null;
+        const batch = pendingStrokeBatch.current.splice(0);
+        if (batch.length > 0) {
+          storeRef.current.mergeCanvasStrokes(batch);
+        }
+      });
+    };
+
+    const strokeOrder = createStrokeOrderBuffer(flushPendingStrokes);
+    strokeOrderRef.current = strokeOrder;
+    strokeOrder.reset(0);
+
     channel.bind("pusher:subscription_succeeded", () => {
       storeRef.current.setConnectionState("connected");
+      setLiveDrawChannel(channel);
       requestResync(roomId);
     });
 
@@ -147,10 +172,16 @@ export function usePusher(
         drawerId: string;
         deadline: number;
         choices?: string[];
+        turnId?: string;
       }) => {
         const s = storeRef.current;
+        if (data.turnId && s.turnId && data.turnId !== s.turnId && s.phase === "drawing") {
+          return;
+        }
+        strokeOrderRef.current?.reset(0);
         s.applySnapshot({
           phase: "word_select",
+          turnId: data.turnId ?? s.turnId,
           drawerId: data.drawerId,
           wordChoiceDeadline: data.deadline,
           wordChoices: data.choices ?? s.wordChoices,
@@ -176,26 +207,42 @@ export function usePusher(
         wordDisplay: string;
         turnEndTime: number;
         drawingStarted?: boolean;
+        turnId?: string;
       }) => {
         const s = storeRef.current;
+        if (
+          data.turnId &&
+          s.turnId === data.turnId &&
+          s.phase === "drawing"
+        ) {
+          return;
+        }
+        strokeOrderRef.current?.reset(0);
         s.applySnapshot({
           phase: "drawing",
+          turnId: data.turnId ?? s.turnId,
           drawerId: data.drawerId,
           wordLength: data.wordLength,
           wordDisplay: data.wordDisplay,
           drawingStarted: data.drawingStarted ?? false,
-          secretWord: null,
+          secretWord: data.drawerId === playerId ? s.secretWord : null,
           revealedWord: null,
           turnPointAwards: [],
           turnEndTime: data.turnEndTime,
           wordChoices: [],
+          wordChoiceDeadline: null,
+          phaseDeadline: null,
+          chatMessages: [],
+          canvasActions: [],
           players: s.players.map((p) => ({
             ...p,
             isDrawer: p.id === data.drawerId,
             hasGuessedCorrectly: false,
           })),
         });
-        requestResync(roomId);
+        if (data.drawerId === playerId && !useGameStore.getState().secretWord) {
+          requestResync(roomId);
+        }
       }
     );
 
@@ -219,24 +266,32 @@ export function usePusher(
       storeRef.current.addReaction(data);
     });
 
-    channel.bind("draw_strokes", (data: { strokes: CanvasAction[] }) => {
-      const strokes = data.strokes.filter(
-        (stroke): stroke is Extract<CanvasAction, { type: "stroke" }> =>
-          stroke.type === "stroke"
-      );
+    const applyIncomingStrokes = (
+      seq: number | undefined,
+      strokes: StrokeAction[]
+    ) => {
       if (strokes.length === 0) return;
+      // Drawer already paints locally — applying echoes causes flicker + extra redraws.
+      if (storeRef.current.drawerId === playerId) return;
+      strokeOrder.push(seq, strokes);
+    };
 
-      pendingStrokeBatch.current.push(...strokes);
-      if (strokeFlushRaf.current !== null) return;
+    channel.bind(
+      "draw_strokes",
+      (data: { strokes: CanvasAction[]; seq?: number }) => {
+        const strokes = data.strokes.filter(
+          (stroke): stroke is StrokeAction => stroke.type === "stroke"
+        );
+        applyIncomingStrokes(data.seq, strokes);
+      }
+    );
 
-      strokeFlushRaf.current = requestAnimationFrame(() => {
-        strokeFlushRaf.current = null;
-        const batch = pendingStrokeBatch.current.splice(0);
-        if (batch.length > 0) {
-          storeRef.current.mergeCanvasStrokes(batch);
-        }
-      });
-    });
+    channel.bind(
+      "client-draw_strokes",
+      (data: { strokes: StrokeAction[]; seq?: number }) => {
+        applyIncomingStrokes(data.seq, data.strokes ?? []);
+      }
+    );
 
     channel.bind("fill", (data: { action: CanvasAction }) => {
       const s = storeRef.current;
@@ -249,6 +304,7 @@ export function usePusher(
     });
 
     channel.bind("canvas_cleared", () => {
+      strokeOrder.reset(0);
       storeRef.current.clearCanvas();
     });
 
@@ -274,17 +330,23 @@ export function usePusher(
     channel.bind(
       "turn_ended",
       (data: {
+        turnId?: string;
         revealedWord: string;
         turnPointAwards?: TurnPointAward[];
         players: RoomSnapshot["players"];
+        phaseDeadline?: number | null;
       }) => {
-        storeRef.current.applySnapshot({
+        const s = storeRef.current;
+        if (data.turnId && s.turnId && data.turnId !== s.turnId) return;
+        if (s.phase === "word_select" || s.phase === "ended") return;
+        s.applySnapshot({
           phase: "turn_end",
           revealedWord: data.revealedWord,
           secretWord: data.revealedWord,
           turnPointAwards: data.turnPointAwards ?? [],
           players: data.players ?? [],
           crownHolderId: data.players?.find((p) => p.hasCrown)?.id ?? null,
+          phaseDeadline: data.phaseDeadline ?? s.phaseDeadline,
         });
       }
     );
@@ -300,14 +362,19 @@ export function usePusher(
     );
 
     channel.bind("state_sync", (data: RoomSnapshot) => {
-      const s = storeRef.current;
-      s.applyRoomSnapshot(data);
-      const isDrawer = data.drawerId === playerId;
-      if (isDrawer && data.phase === "drawing" && !data.secretWord) {
-        void requestResync(roomId);
+      if (data.phase !== "drawing") {
+        strokeOrder.reset(0);
+      } else if (data.strokeSeq !== undefined) {
+        strokeOrder.reset(data.strokeSeq);
       }
-      if (isDrawer && data.phase === "word_select" && !data.wordChoices?.length) {
-        void requestResync(roomId);
+      storeRef.current.applyRoomSnapshot(data);
+      const s = storeRef.current;
+      if (
+        data.phase === "word_select" &&
+        data.drawerId === playerId &&
+        s.wordChoices.length === 0
+      ) {
+        requestResync(roomId);
       }
     });
 
@@ -330,6 +397,9 @@ export function usePusher(
         strokeFlushRaf.current = null;
       }
       pendingStrokeBatch.current = [];
+      strokeOrder.dispose();
+      strokeOrderRef.current = null;
+      setLiveDrawChannel(null);
       window.clearInterval(heartbeat);
       channel.unbind_all();
       pusher.unsubscribe(`private-room-${roomId}`);

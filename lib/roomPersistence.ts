@@ -16,6 +16,8 @@ interface StoredRoom {
   phase: Room["phase"];
   currentRound: number;
   currentTurnIndex: number;
+  turnId?: string;
+  strokeSeq?: number;
   drawerId: string | null;
   secretWord: string | null;
   wordChoices: string[];
@@ -77,6 +79,8 @@ export function serializeRoom(room: Room): StoredRoom {
     phase: room.phase,
     currentRound: room.currentRound,
     currentTurnIndex: room.currentTurnIndex,
+    turnId: room.turnId,
+    strokeSeq: room.strokeSeq,
     drawerId: room.drawerId,
     secretWord: room.secretWord,
     wordChoices: room.wordChoices,
@@ -104,6 +108,8 @@ export function deserializeRoom(stored: StoredRoom): Room {
     ...stored,
     updatedAt: stored.updatedAt ?? stored.createdAt,
     phaseDeadline: stored.phaseDeadline ?? null,
+    turnId: stored.turnId ?? "",
+    strokeSeq: stored.strokeSeq ?? 0,
     players: new Map(stored.players.map((player) => [player.id, player])),
     votekickVotes: new Set(stored.votekickVotes),
     turnTimer: null,

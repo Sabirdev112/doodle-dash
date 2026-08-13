@@ -31,6 +31,7 @@ import TurnOverlay from "@/components/TurnOverlay";
 import WaitingRoom from "@/components/WaitingRoom";
 
 import { tryReconnectRoom, requestRoomResync, useGameStore } from "@/lib/store";
+import { useDeadlineResolve } from "@/lib/useDeadlineResolve";
 
 import ButtonSpinner from "@/components/ButtonSpinner";
 
@@ -81,6 +82,8 @@ export default function RoomPage({
     chatMessages,
     currentRound,
     totalRounds,
+    turnId,
+    phaseDeadline,
     finalStandings,
     connectionState,
     drawerName,
@@ -107,14 +110,23 @@ export default function RoomPage({
 
   usePusher(inLobby ? roomId : "", player?.id ?? "", sessionToken ?? "");
 
+  useDeadlineResolve(
+    roomId,
+    inLobby && phase === "word_select",
+    wordChoiceDeadline
+  );
+  useDeadlineResolve(roomId, inLobby && phase === "drawing", turnEndTime);
+  useDeadlineResolve(roomId, inLobby && phase === "turn_end", phaseDeadline);
+
   useEffect(() => {
     if (!inLobby) return;
-    // During drawing, canvas sync is via Pusher — full resync causes lag/flicker.
-    if (phase === "drawing") return;
-    const intervalMs = phase === "waiting" ? 8000 : 5000;
+    // Live sync via Pusher during active turns — polling causes stale state + lag.
+    if (phase === "drawing" || phase === "word_select" || phase === "turn_end") {
+      return;
+    }
     const interval = window.setInterval(() => {
       void requestRoomResync(roomId);
-    }, intervalMs);
+    }, 8000);
     return () => window.clearInterval(interval);
   }, [inLobby, phase, roomId]);
 
@@ -332,6 +344,8 @@ export default function RoomPage({
 
                   playerId={player.id}
 
+                  turnId={turnId}
+
                   actions={canvasActions}
 
                   isDrawer={isDrawer}
@@ -346,9 +360,13 @@ export default function RoomPage({
 
                 />
 
-                {(phase === "turn_end" || phase === "word_select") && (
+                {turnId && (
 
                   <TurnOverlay
+
+                    key={turnId}
+
+                    turnId={turnId}
 
                     phase={phase}
 

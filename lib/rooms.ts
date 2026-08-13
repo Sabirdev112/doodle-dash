@@ -28,6 +28,8 @@ import {
   ROOM_TTL_MS,
   PLAYER_IDLE_MS,
   WORD_CHOICE_TIMEOUT_MS,
+  TURN_END_HOLD_MS,
+  ALL_GUESSED_HOLD_MS,
   REACTION_EMOJIS,
   MAX_CHAT_MESSAGES,
   MAX_CANVAS_ACTIONS_PER_TURN,
@@ -414,6 +416,8 @@ export async function createRoom(
     phase: "waiting",
     currentRound: 0,
     currentTurnIndex: 0,
+    turnId: "",
+    strokeSeq: 0,
     drawerId: null,
     secretWord: null,
     wordChoices: [],
@@ -686,15 +690,20 @@ export function getRoomSnapshot(room: Room, playerId: string): RoomSnapshot {
     players: getPlayersList(room),
     currentRound: room.currentRound,
     totalRounds: room.settings.rounds,
+    turnId: room.turnId,
+    strokeSeq: room.strokeSeq,
     drawerId: room.drawerId,
     wordLength,
     wordDisplay,
     turnEndTime: room.turnEndTime,
     turnStartTime: room.turnStartTime,
+    wordChoiceDeadline: room.wordChoiceDeadline ?? undefined,
+    phaseDeadline: room.phaseDeadline,
     canvasActions: room.canvasActions,
     chatMessages: room.chatMessages,
     correctGuessers: room.correctGuessers,
     drawingStarted: room.drawingStarted,
+    updatedAt: room.updatedAt,
   };
 
   if (isDrawer && room.secretWord) {
@@ -702,7 +711,6 @@ export function getRoomSnapshot(room: Room, playerId: string): RoomSnapshot {
   }
   if (isDrawer && room.phase === "word_select") {
     snapshot.wordChoices = room.wordChoices;
-    snapshot.wordChoiceDeadline = room.wordChoiceDeadline ?? undefined;
   }
   if (room.phase === "turn_end" && room.secretWord) {
     snapshot.revealedWord = room.secretWord;
@@ -734,13 +742,18 @@ export function getBroadcastSnapshot(room: Room): RoomSnapshot {
     players: getPlayersList(room),
     currentRound: room.currentRound,
     totalRounds: room.settings.rounds,
+    turnId: room.turnId,
+    strokeSeq: room.strokeSeq,
     drawerId: room.drawerId,
     wordLength,
     wordDisplay,
     turnEndTime: room.turnEndTime,
     turnStartTime: room.turnStartTime,
+    wordChoiceDeadline: room.wordChoiceDeadline ?? undefined,
+    phaseDeadline: room.phaseDeadline,
     correctGuessers: room.correctGuessers,
     drawingStarted: room.drawingStarted,
+    updatedAt: room.updatedAt,
   };
 
   if (room.phase === "turn_end" && room.secretWord) {
@@ -769,6 +782,8 @@ export async function broadcastRoomState(roomId: string): Promise<void> {
 async function startWordSelection(room: Room): Promise<void> {
   const drawerId = room.drawerId!;
   room.phase = "word_select";
+  room.turnId = nanoid();
+  room.strokeSeq = 0;
   room.secretWord = null;
   room.correctGuessers = [];
   room.chatMessages = [];
@@ -834,6 +849,12 @@ export async function pickWord(
 ): Promise<boolean> {
   const room = getRoom(roomId);
   if (!room) return false;
+
+  // Idempotent: a late auto-pick after the turn already started is a no-op success.
+  if (room.phase === "drawing" && room.drawerId === playerId) {
+    return true;
+  }
+
   if (room.phase !== "word_select" || room.drawerId !== playerId) return false;
 
   const chosen = room.wordChoices.find(
@@ -846,6 +867,8 @@ export async function pickWord(
     room.wordChoiceTimer = null;
   }
 
+  room.wordChoices = [];
+  room.wordChoiceDeadline = null;
   room.secretWord = chosen;
   room.usedWords.push(chosen.toLowerCase());
   room.phase = "drawing";
@@ -869,6 +892,7 @@ export async function pickWord(
     {
       event: "turn_started",
       payload: {
+        turnId: room.turnId,
         drawerId: playerId,
         wordLength,
         wordDisplay,
@@ -887,7 +911,6 @@ export async function pickWord(
     startHintTimer(room);
   }
 
-  await broadcastRoomState(roomId);
   await persistRoom(room);
   return true;
 }
@@ -944,7 +967,8 @@ async function broadcastWordDisplay(room: Room): Promise<void> {
 export async function handleDrawStrokes(
   roomId: string,
   playerId: string,
-  strokes: StrokeAction[]
+  strokes: StrokeAction[],
+  seq?: number
 ): Promise<boolean> {
   const room = getRoom(roomId);
   if (!room) return false;
@@ -979,9 +1003,15 @@ export async function handleDrawStrokes(
 
   if (accepted.length === 0) return false;
 
+  const batchSeq =
+    typeof seq === "number" && Number.isFinite(seq) && seq > 0
+      ? seq
+      : room.strokeSeq + 1;
+  room.strokeSeq = Math.max(room.strokeSeq, batchSeq);
+
   await triggerRoomEvent(roomId, {
     event: "draw_strokes",
-    payload: { strokes: accepted },
+    payload: { strokes: accepted, seq: batchSeq },
   });
   void persistRoom(room);
   return true;
@@ -1082,8 +1112,17 @@ export async function handleGuess(
       .filter((id) => id !== room.drawerId)
       .every((id) => room.players.get(id)?.hasGuessedCorrectly);
 
-    if (allGuessed) {
-      setTimeout(() => void endTurn(roomId), 1500);
+    if (allGuessed && room.turnEndTime) {
+      room.turnEndTime = Math.min(
+        room.turnEndTime,
+        Date.now() + ALL_GUESSED_HOLD_MS
+      );
+      if (room.turnTimer) {
+        clearTimeout(room.turnTimer);
+        const remaining = Math.max(0, room.turnEndTime - Date.now());
+        room.turnTimer = setTimeout(() => void endTurn(roomId), remaining);
+      }
+      await broadcastRoomState(roomId);
     }
     return true;
   }
@@ -1123,6 +1162,10 @@ async function endTurn(roomId: string): Promise<void> {
   const room = getRoom(roomId);
   if (!room || room.phase !== "drawing") return;
 
+  const endedTurnId = room.turnId;
+  room.phase = "turn_end";
+  room.phaseDeadline = Date.now() + TURN_END_HOLD_MS;
+
   if (room.turnTimer) {
     clearTimeout(room.turnTimer);
     room.turnTimer = null;
@@ -1133,10 +1176,14 @@ async function endTurn(roomId: string): Promise<void> {
   }
 
   const revealedWord = room.secretWord ?? "???";
+  const officialEnd =
+    room.turnStartTime != null
+      ? room.turnStartTime + room.settings.turnDuration * 1000
+      : room.turnEndTime;
   const drawerPoints = getDrawerPoints(
     room.correctGuessers.length,
     room.settings.turnDuration,
-    room.turnEndTime,
+    officialEnd,
     room.lastGuessTime
   );
   const drawer = room.players.get(room.drawerId!);
@@ -1174,14 +1221,14 @@ async function endTurn(roomId: string): Promise<void> {
   await triggerRoomEvent(roomId, {
     event: "turn_ended",
     payload: {
+      turnId: endedTurnId,
       revealedWord,
       turnPointAwards,
       players: getPlayersList(room),
+      phaseDeadline: room.phaseDeadline,
     },
   });
 
-  room.phase = "turn_end";
-  room.phaseDeadline = Date.now() + 3000;
   room.currentTurnIndex++;
 
   await broadcastRoomState(roomId);

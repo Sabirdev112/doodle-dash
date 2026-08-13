@@ -97,6 +97,10 @@ export interface Room {
   phase: GamePhase;
   currentRound: number;
   currentTurnIndex: number;
+  /** Unique id for the in-progress word_select → drawing → turn_end cycle. */
+  turnId: string;
+  /** Last stroke-batch sequence number for the current turn. */
+  strokeSeq: number;
   drawerId: string | null;
   secretWord: string | null;
   wordChoices: string[];
@@ -150,12 +154,15 @@ export interface RoomSnapshot {
   players: PublicPlayer[];
   currentRound: number;
   totalRounds: number;
+  turnId?: string;
+  strokeSeq?: number;
   drawerId: string | null;
   wordLength: number;
   wordDisplay: string;
   secretWord?: string;
   wordChoices?: string[];
   wordChoiceDeadline?: number;
+  phaseDeadline?: number | null;
   turnEndTime: number | null;
   turnStartTime: number | null;
   /** Omitted from lightweight Pusher broadcasts — use resync or stroke events. */
@@ -167,6 +174,8 @@ export interface RoomSnapshot {
   revealedWord?: string;
   turnPointAwards?: TurnPointAward[];
   finalStandings?: PublicPlayer[];
+  /** Server room revision — ignore stale snapshots with a lower value. */
+  updatedAt?: number;
 }
 
 export interface SessionPlayer {
@@ -200,6 +209,14 @@ export const PLAYER_IDLE_MS = 5 * 60 * 1000;
 /** Allow reclaiming a name after this long without heartbeat (page refresh). */
 export const PLAYER_RECONNECT_GRACE_MS = 30 * 1000;
 export const WORD_CHOICE_TIMEOUT_MS = 15_000;
+/** How long the turn-end score popup stays up before the next word pick. */
+export const TURN_END_HOLD_MS = 2_000;
+/** Brief pause after everyone has guessed before ending the turn. */
+export const ALL_GUESSED_HOLD_MS = 1_500;
+/** Client stroke-batch interval — keep close to the live flush cadence. */
+export const STROKE_FLUSH_INTERVAL_MS = 40;
+/** How long guessers wait for a missing stroke seq before skipping the gap. */
+export const STROKE_REORDER_STALL_MS = 100;
 /** Max chat lines kept server-side per room. */
 export const MAX_CHAT_MESSAGES = 200;
 /** Max canvas actions stored for the current turn. */

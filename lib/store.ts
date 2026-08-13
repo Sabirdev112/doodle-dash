@@ -30,10 +30,12 @@ interface GameStore {
   players: PublicPlayer[];
   currentRound: number;
   totalRounds: number;
+  turnId: string;
   drawerId: string | null;
   secretWord: string | null;
   wordChoices: string[];
   wordChoiceDeadline: number | null;
+  phaseDeadline: number | null;
   wordLength: number;
   wordDisplay: string;
   drawingStarted: boolean;
@@ -47,6 +49,8 @@ interface GameStore {
   finalStandings: PublicPlayer[] | null;
   connectionState: "connected" | "connecting" | "disconnected";
   drawerName: string;
+  /** Last applied server room revision (for stale snapshot guard). */
+  roomUpdatedAt: number;
 
   initPlayer: (name: string, avatar: string) => void;
   restorePlayer: (player: SessionPlayer) => void;
@@ -83,10 +87,12 @@ const roomState = {
   players: [] as PublicPlayer[],
   currentRound: 0,
   totalRounds: 0,
+  turnId: "",
   drawerId: null as string | null,
   secretWord: null as string | null,
   wordChoices: [] as string[],
   wordChoiceDeadline: null as number | null,
+  phaseDeadline: null as number | null,
   wordLength: 0,
   wordDisplay: "",
   drawingStarted: false,
@@ -100,6 +106,7 @@ const roomState = {
   finalStandings: null as PublicPlayer[] | null,
   connectionState: "connecting" as const,
   drawerName: "",
+  roomUpdatedAt: 0,
 };
 
 export const useGameStore = create<GameStore>()((set, get) => ({
@@ -229,52 +236,88 @@ export const useGameStore = create<GameStore>()((set, get) => ({
   },
 
   applyRoomSnapshot: (snapshot) =>
-    set((state) => ({
-      ...state,
-      phase: snapshot.phase,
-      settings: snapshot.settings,
-      players: snapshot.players,
-      currentRound: snapshot.currentRound,
-      totalRounds: snapshot.totalRounds,
-      drawerId: snapshot.drawerId,
-      wordLength: snapshot.wordLength,
-      wordDisplay: snapshot.wordDisplay,
-      drawingStarted: snapshot.drawingStarted,
-      secretWord:
-        snapshot.secretWord ??
-        snapshot.revealedWord ??
-        (snapshot.phase === "turn_end" || snapshot.phase === "word_select"
-          ? state.secretWord ?? state.revealedWord
-          : null),
-      revealedWord:
-        snapshot.revealedWord ??
-        (snapshot.phase === "turn_end" || snapshot.phase === "word_select"
-          ? state.revealedWord
-          : null),
-      turnPointAwards:
-        snapshot.turnPointAwards ??
-        (snapshot.phase === "turn_end" || snapshot.phase === "word_select"
-          ? state.turnPointAwards
-          : []),
-      wordChoices: snapshot.wordChoices ?? state.wordChoices,
-      wordChoiceDeadline: snapshot.wordChoiceDeadline ?? state.wordChoiceDeadline,
-      turnEndTime: snapshot.turnEndTime,
-      canvasActions:
-        snapshot.canvasActions !== undefined
-          ? snapshot.canvasActions
-          : state.canvasActions,
-      chatMessages:
-        snapshot.chatMessages !== undefined
-          ? snapshot.chatMessages
-          : snapshot.phase === "word_select" && snapshot.phase !== state.phase
-            ? []
-            : state.chatMessages,
-      finalStandings: snapshot.finalStandings ?? null,
-      crownHolderId: snapshot.players.find((p) => p.hasCrown)?.id ?? null,
-      drawerName:
-        snapshot.players.find((p) => p.id === snapshot.drawerId)?.name ??
-        state.drawerName,
-    })),
+    set((state) => {
+      if (
+        snapshot.updatedAt !== undefined &&
+        snapshot.updatedAt < state.roomUpdatedAt
+      ) {
+        return state;
+      }
+
+      // Never regress from an active drawing turn back to the same turn's word pick.
+      if (
+        state.phase === "drawing" &&
+        snapshot.phase === "word_select" &&
+        (!snapshot.turnId || snapshot.turnId === state.turnId)
+      ) {
+        return state;
+      }
+
+      const nextPhase = snapshot.phase;
+      const keepTurnEndUi = nextPhase === "turn_end";
+      const nextTurnId = snapshot.turnId ?? state.turnId;
+      const newTurn = Boolean(snapshot.turnId && snapshot.turnId !== state.turnId);
+
+      return {
+        ...state,
+        roomUpdatedAt: snapshot.updatedAt ?? state.roomUpdatedAt,
+        phase: nextPhase,
+        settings: snapshot.settings,
+        players: snapshot.players,
+        currentRound: snapshot.currentRound,
+        totalRounds: snapshot.totalRounds,
+        turnId: nextTurnId,
+        drawerId: snapshot.drawerId,
+        wordLength: snapshot.wordLength,
+        wordDisplay: snapshot.wordDisplay,
+        drawingStarted: snapshot.drawingStarted,
+        secretWord:
+          nextPhase === "drawing"
+            ? (snapshot.secretWord ?? state.secretWord)
+            : nextPhase === "turn_end"
+              ? (snapshot.secretWord ?? snapshot.revealedWord ?? state.secretWord)
+              : nextPhase === "word_select"
+                ? null
+                : (snapshot.secretWord ?? null),
+        revealedWord: keepTurnEndUi
+          ? (snapshot.revealedWord ?? state.revealedWord)
+          : null,
+        turnPointAwards: keepTurnEndUi
+          ? (snapshot.turnPointAwards ?? state.turnPointAwards)
+          : [],
+        wordChoices:
+          nextPhase === "word_select"
+            ? (snapshot.wordChoices ?? (newTurn ? [] : state.wordChoices))
+            : [],
+        wordChoiceDeadline:
+          nextPhase === "word_select"
+            ? (snapshot.wordChoiceDeadline ??
+              (newTurn ? null : state.wordChoiceDeadline))
+            : null,
+        phaseDeadline:
+          nextPhase === "turn_end"
+            ? (snapshot.phaseDeadline ?? state.phaseDeadline)
+            : null,
+        turnEndTime: snapshot.turnEndTime,
+        canvasActions:
+          snapshot.canvasActions !== undefined
+            ? snapshot.canvasActions
+            : nextPhase === "drawing" && state.phase !== "drawing"
+              ? []
+              : state.canvasActions,
+        chatMessages:
+          snapshot.chatMessages !== undefined
+            ? snapshot.chatMessages
+            : nextPhase === "word_select" && nextPhase !== state.phase
+              ? []
+              : state.chatMessages,
+        finalStandings: snapshot.finalStandings ?? null,
+        crownHolderId: snapshot.players.find((p) => p.hasCrown)?.id ?? null,
+        drawerName:
+          snapshot.players.find((p) => p.id === snapshot.drawerId)?.name ??
+          state.drawerName,
+      };
+    }),
 }));
 
 /** Remove any legacy persisted session from older builds. */

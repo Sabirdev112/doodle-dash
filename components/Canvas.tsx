@@ -19,7 +19,9 @@ import {
 } from "@/lib/drawingTools";
 import { sendAction, useGameStore } from "@/lib/store";
 import CanvasCursor from "@/components/CanvasCursor";
+import { broadcastLiveStrokes } from "@/lib/liveDrawing";
 import { floodFillCanvas, floodFillImageData } from "@/lib/floodFill";
+import { STROKE_FLUSH_INTERVAL_MS } from "@/lib/types";
 
 export interface CanvasHandle {
   undo: () => Promise<void>;
@@ -28,6 +30,7 @@ export interface CanvasHandle {
 interface CanvasProps {
   roomId: string;
   playerId: string;
+  turnId?: string;
   actions: CanvasAction[];
   isDrawer: boolean;
   color: string;
@@ -167,6 +170,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
   {
     roomId,
     playerId,
+    turnId,
     actions,
     isDrawer,
     color,
@@ -186,6 +190,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
   const liveStrokeId = useRef<string | null>(null);
   const liveSentPointCount = useRef(0);
   const lastLiveSent = useRef(0);
+  const strokeSeq = useRef(0);
+  const previewedPointCount = useRef(0);
   const renderedCount = useRef(0);
   const renderedPointCounts = useRef<Map<string, number>>(new Map());
   const fillInProgress = useRef(false);
@@ -294,11 +300,14 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
 
   const sendStrokeChunk = useCallback(
     (stroke: StrokeAction) => {
+      const seq = ++strokeSeq.current;
+      broadcastLiveStrokes([stroke], seq);
       void sendAction({
         type: "draw_strokes",
         roomId,
         playerId,
         strokes: [stroke],
+        seq,
       }).catch(() => {
         /* best-effort live stream */
       });
@@ -312,7 +321,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     if (points.length < 2) return;
 
     const now = Date.now();
-    if (now - lastLiveSent.current < 16) return;
+    if (now - lastLiveSent.current < STROKE_FLUSH_INTERVAL_MS) return;
     if (points.length <= liveSentPointCount.current) return;
 
     const overlap = Math.max(0, liveSentPointCount.current - 1);
@@ -462,6 +471,10 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     return () => observer.disconnect();
   }, [resizeCanvas]);
 
+  useEffect(() => {
+    strokeSeq.current = 0;
+  }, [turnId]);
+
   const sendFill = async (action: FillAction) => {
     if (fillInProgress.current) return;
     const bg = bgRef.current;
@@ -536,19 +549,31 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
 
       const w = active.width;
       const h = active.height;
-      ctx.clearRect(0, 0, w, h);
+      const startIdx = Math.max(0, previewedPointCount.current - 1);
+
+      if (previewedPointCount.current === 0) {
+        ctx.clearRect(0, 0, w, h);
+      }
+
+      if (points.length <= startIdx && previewedPointCount.current > 0) return;
+
+      const segment = points.slice(startIdx);
+      if (segment.length === 0) return;
+      const segmentPoints =
+        segment.length === 1 ? [segment[0], { ...segment[0] }] : segment;
 
       const preview: StrokeAction = {
         id: "preview",
         type: "stroke",
         color,
         size,
-        points,
+        points: segmentPoints,
         isEraser: false,
         opacity: strokeOpacityForTool(tool),
       };
 
       drawStroke(ctx, preview, w, h);
+      previewedPointCount.current = points.length;
     },
     [color, previewEraserOnBg, size, tool]
   );
@@ -564,6 +589,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     liveStrokeId.current = nanoid();
     liveSentPointCount.current = 0;
     lastLiveSent.current = 0;
+    previewedPointCount.current = 0;
     currentStroke.current = [normPoint(e, active)];
 
     if (tool === "fill") {
@@ -609,6 +635,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     const ctx = getCtx(active);
     if (active) active.releasePointerCapture(e.pointerId);
     if (ctx && active) ctx.clearRect(0, 0, active.width, active.height);
+    previewedPointCount.current = 0;
 
     if (currentStroke.current.length < 1) {
       currentStroke.current = [];
