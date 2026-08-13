@@ -1103,7 +1103,7 @@ export async function handleDrawStrokes(
   for (const stroke of strokes) {
     if (
       stroke.points.length === 0 ||
-      stroke.points.length > 100 ||
+      stroke.points.length > 120 ||
       stroke.size < 1 ||
       stroke.size > 50
     ) {

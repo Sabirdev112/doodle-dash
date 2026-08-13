@@ -27,13 +27,14 @@ export function checkRateLimit(
   key: string,
   maxTokens: number,
   refillRate: number,
-  cost = 1
+  cost = 1,
+  cooldownMs = 2000
 ): boolean {
   const entry = getBucket(key, maxTokens);
   if (Date.now() < entry.cooldownUntil) return false;
   refill(entry, maxTokens, refillRate);
   if (entry.tokens < cost) {
-    entry.cooldownUntil = Date.now() + 2000;
+    if (cooldownMs > 0) entry.cooldownUntil = Date.now() + cooldownMs;
     return false;
   }
   entry.tokens -= cost;
@@ -45,7 +46,8 @@ export function checkIpRateLimit(ip: string, action: string, maxPerMinute: numbe
 }
 
 export function checkDrawRateLimit(playerId: string): boolean {
-  return checkRateLimit(`draw:${playerId}`, 300, 120, 1);
+  // Drop extras only — a 2s cooldown made fast drawing freeze on Vercel.
+  return checkRateLimit(`draw:${playerId}`, 80, 25, 1, 0);
 }
 
 export function checkGuessRateLimit(playerId: string): boolean {

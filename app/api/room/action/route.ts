@@ -58,7 +58,7 @@ const strokeSchema = z.object({
   type: z.literal("stroke"),
   color: z.string().max(20),
   size: z.number().min(1).max(50),
-  points: z.array(pointSchema).min(1).max(100),
+  points: z.array(pointSchema).min(1).max(120),
   isEraser: z.boolean(),
   opacity: z.number().min(0.1).max(1).optional(),
   startIndex: z.number().int().min(0).max(50_000).optional(),
@@ -143,9 +143,6 @@ const actionSchema = z.discriminatedUnion("type", [
 export async function POST(req: NextRequest) {
   try {
     const ip = getClientIp(req);
-    if (!checkActionIpRateLimit(ip)) {
-      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
-    }
 
     const body = await req.json();
     const parsed = actionSchema.safeParse(body);
@@ -154,6 +151,10 @@ export async function POST(req: NextRequest) {
     }
 
     const action = parsed.data;
+    const skipIpLimit = action.type === "draw_strokes" || action.type === "ping";
+    if (!skipIpLimit && !checkActionIpRateLimit(ip)) {
+      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+    }
     const session = requireSession(req, action.roomId);
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

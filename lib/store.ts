@@ -309,7 +309,12 @@ export const useGameStore = create<GameStore>()((set, get) => ({
               ? state.phase === "drawing" &&
                 (snapshot.turnId ?? state.turnId) === state.turnId &&
                 state.canvasActions.length > 0
-                ? state.canvasActions
+                ? applyCanvasStrokeUpdates(
+                    snapshot.canvasActions,
+                    state.canvasActions.filter(
+                      (action): action is StrokeAction => action.type === "stroke"
+                    )
+                  )
                 : snapshot.canvasActions
               : state.phase === "drawing"
                 ? state.canvasActions
@@ -340,12 +345,26 @@ if (typeof window !== "undefined") {
 export async function sendAction(
   action: Record<string, unknown>
 ): Promise<Response> {
-  const { sessionToken } = useGameStore.getState();
+  const { sessionToken, joinedRoomId } = useGameStore.getState();
+  if (!sessionToken) {
+    return new Response(JSON.stringify({ error: "No session" }), {
+      status: 401,
+    });
+  }
+  if (
+    typeof action.roomId === "string" &&
+    joinedRoomId &&
+    action.roomId !== joinedRoomId
+  ) {
+    return new Response(JSON.stringify({ error: "Left room" }), {
+      status: 401,
+    });
+  }
   return fetch("/api/room/action", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
+      Authorization: `Bearer ${sessionToken}`,
     },
     body: JSON.stringify(action),
   });
@@ -353,19 +372,37 @@ export async function sendAction(
 
 /** Leave the current room server-side and wipe local session. */
 export async function leaveSession(): Promise<void> {
-  const { player, joinedRoomId, clearSession } = useGameStore.getState();
-  if (player && joinedRoomId) {
-    try {
-      await sendAction({
-        type: "leave",
-        roomId: joinedRoomId,
-        playerId: player.id,
-      });
-    } catch {
-      /* best-effort */
-    }
-  }
+  const { player, joinedRoomId, sessionToken, clearSession } =
+    useGameStore.getState();
+  const leave =
+    player && joinedRoomId && sessionToken
+      ? {
+          roomId: joinedRoomId,
+          playerId: player.id,
+          sessionToken,
+        }
+      : null;
+
+  // Drop local session first so heartbeats / deadline retries stop immediately.
   clearSession();
+
+  if (!leave) return;
+  try {
+    await fetch("/api/room/action", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${leave.sessionToken}`,
+      },
+      body: JSON.stringify({
+        type: "leave",
+        roomId: leave.roomId,
+        playerId: leave.playerId,
+      }),
+    });
+  } catch {
+    /* best-effort */
+  }
 }
 
 export async function apiJoinRoom(
@@ -410,10 +447,15 @@ export async function apiJoinRoom(
 
 export async function requestRoomResync(roomId: string): Promise<void> {
   try {
+    const { sessionToken, joinedRoomId } = useGameStore.getState();
+    if (!sessionToken || joinedRoomId !== roomId) return;
     const res = await sendAction({ type: "resync", roomId });
     const data = (await res.json()) as { ok?: boolean; snapshot?: RoomSnapshot };
     if (res.ok && data.ok && data.snapshot) {
-      useGameStore.getState().applyRoomSnapshot(data.snapshot);
+      const current = useGameStore.getState();
+      if (current.sessionToken && current.joinedRoomId === roomId) {
+        current.applyRoomSnapshot(data.snapshot);
+      }
     }
   } catch {
     /* best-effort */
@@ -423,10 +465,15 @@ export async function requestRoomResync(roomId: string): Promise<void> {
 /** Resolve KV deadlines without replacing the live canvas. */
 export async function requestResolveDeadlines(roomId: string): Promise<void> {
   try {
+    const { sessionToken, joinedRoomId } = useGameStore.getState();
+    if (!sessionToken || joinedRoomId !== roomId) return;
     const res = await sendAction({ type: "resolve_deadlines", roomId });
     const data = (await res.json()) as { ok?: boolean; snapshot?: RoomSnapshot };
     if (res.ok && data.ok && data.snapshot) {
-      useGameStore.getState().applyRoomSnapshot(data.snapshot);
+      const current = useGameStore.getState();
+      if (current.sessionToken && current.joinedRoomId === roomId) {
+        current.applyRoomSnapshot(data.snapshot);
+      }
     }
   } catch {
     /* best-effort */

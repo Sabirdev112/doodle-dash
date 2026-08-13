@@ -4,8 +4,6 @@ node_modules/
 out/
 
 # Environment
-.env
-.env.local
 .env*.local
 
 # Debug
@@ -15,7 +13,6 @@ yarn-error.log*
 
 # IDE
 .idea/
-.vscode/
 *.swp
 *.swo
 
@@ -27,3 +24,4 @@ Thumbs.db
 next-env.d.ts
 
 prompt.md
+config.bat

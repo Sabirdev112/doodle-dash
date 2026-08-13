@@ -221,10 +221,12 @@ export const WORD_CHOICE_TIMEOUT_MS = 15_000;
 export const TURN_END_HOLD_MS = 2_000;
 /** Brief pause after everyone has guessed before ending the turn. */
 export const ALL_GUESSED_HOLD_MS = 1_500;
-/** Client stroke-batch interval — keep close to the live flush cadence. */
-export const STROKE_FLUSH_INTERVAL_MS = 40;
+/** Live client-event interval. Pusher free-tier caps client events at ~10/sec. */
+export const STROKE_FLUSH_INTERVAL_MS = 100;
+/** HTTP persist interval — slower than live so Vercel/IP limits don't drop ink. */
+export const STROKE_PERSIST_INTERVAL_MS = 220;
 /** How long guessers wait for a missing stroke seq before skipping the gap. */
-export const STROKE_REORDER_STALL_MS = 250;
+export const STROKE_REORDER_STALL_MS = 200;
 /** First letter hint at this fraction of the turn. */
 export const HINT_FIRST_AT = 0.3;
 /** Additional letter hints every this fraction after the first. */

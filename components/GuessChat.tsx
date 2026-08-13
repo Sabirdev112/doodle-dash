@@ -132,7 +132,7 @@ export default function GuessChat({
               type="text"
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder="wild guess goes here…"
+              placeholder="type a guess…"
               maxLength={50}
               aria-busy={submitting}
               className="doodle-input flex-1 py-2 text-sm"

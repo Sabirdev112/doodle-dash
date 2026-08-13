@@ -16,8 +16,6 @@ import Podium from "@/components/Podium";
 
 import GuessChat from "@/components/GuessChat";
 
-import PlayerList from "@/components/PlayerList";
-
 import ReactionBar from "@/components/ReactionBar";
 
 import RoundTimer from "@/components/RoundTimer";
@@ -133,6 +131,8 @@ export default function RoomPage({
       return;
     }
     const interval = window.setInterval(() => {
+      const { joinedRoomId, sessionToken } = useGameStore.getState();
+      if (!sessionToken || joinedRoomId !== roomId) return;
       void requestRoomResync(roomId);
     }, 8000);
     return () => window.clearInterval(interval);
@@ -326,152 +326,89 @@ export default function RoomPage({
 
 
         {inGameBoard && (
+          <div className="space-y-3">
+            {phase === "drawing" && isDrawer && secretWord && (
+              <div className="doodle-card mx-auto max-w-xl px-4 py-3 text-center">
+                <p className="font-sketch text-sm uppercase tracking-wide text-doodle-muted">
+                  Draw this
+                </p>
+                <p className="mt-1 font-sketch text-3xl text-doodle-grape">
+                  {secretWord}
+                </p>
+              </div>
+            )}
 
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-stretch">
-
-            <div className="space-y-4">
-
-              {phase === "drawing" && isDrawer && secretWord && (
-                <div className="doodle-card px-4 py-3 text-center">
-                  <p className="font-sketch text-sm uppercase tracking-wide text-doodle-muted">
-                    Draw this
-                  </p>
-                  <p className="mt-1 font-sketch text-3xl text-doodle-grape">
-                    {secretWord}
-                  </p>
+            <div className="grid items-stretch gap-3 lg:grid-cols-[14rem_minmax(0,1fr)_18rem]">
+              <aside className="order-3 min-h-0 lg:order-none lg:h-auto lg:self-stretch">
+                <div className="doodle-card h-full overflow-y-auto p-3">
+                  <Scoreboard players={players} />
                 </div>
-              )}
+              </aside>
 
-              <div className="relative">
-
-                <Canvas
-
-                  ref={canvasRef}
-
-                  roomId={roomId}
-
-                  playerId={player.id}
-
-                  turnId={turnId}
-
-                  actions={canvasActions}
-
-                  isDrawer={isDrawer}
-
-                  color={color}
-
-                  size={brushSize}
-
-                  tool={tool}
-
-                  disabled={phase !== "drawing"}
-
-                />
-
-                {turnId && (
-
-                  <TurnOverlay
-
-                    key={turnId}
-
-                    turnId={turnId}
-
-                    phase={phase}
-
-                    revealedWord={displayWord}
-
-                    turnPointAwards={turnPointAwards}
-
+              <div className="order-1 flex min-w-0 flex-col gap-3 lg:order-none">
+                <div className="relative">
+                  <Canvas
+                    ref={canvasRef}
                     roomId={roomId}
-
                     playerId={player.id}
-
-                    wordChoices={wordChoices}
-
-                    wordChoiceDeadline={wordChoiceDeadline}
-
+                    turnId={turnId}
+                    actions={canvasActions}
                     isDrawer={isDrawer}
-
-                    drawerName={activeDrawerName}
-
+                    color={color}
+                    size={brushSize}
+                    tool={tool}
+                    disabled={phase !== "drawing"}
                   />
+                  {turnId && (
+                    <TurnOverlay
+                      key={turnId}
+                      turnId={turnId}
+                      phase={phase}
+                      revealedWord={displayWord}
+                      turnPointAwards={turnPointAwards}
+                      roomId={roomId}
+                      playerId={player.id}
+                      wordChoices={wordChoices}
+                      wordChoiceDeadline={wordChoiceDeadline}
+                      isDrawer={isDrawer}
+                      drawerName={activeDrawerName}
+                    />
+                  )}
+                </div>
 
-                )}
-
-              </div>
-
-              <ToolPanel
-
-                color={color}
-
-                size={brushSize}
-
-                tool={tool}
-
-                disabled={!isDrawer || phase !== "drawing"}
-
-                onColorChange={setColor}
-
-                onSizeChange={setBrushSize}
-
-                onToolChange={setTool}
-
-                onUndo={() => canvasRef.current?.undo()}
-
-              />
-
-              {phase === "drawing" && (
-
-                <ReactionBar roomId={roomId} playerId={player.id} />
-
-              )}
-
-            </div>
-
-            <div className="flex min-h-[24rem] flex-col gap-4 lg:max-h-[calc(100vh-6rem)]">
-
-              <div className="doodle-card shrink-0 p-4">
-
-                <Scoreboard players={players} />
-
-              </div>
-
-              <div className="flex min-h-[220px] flex-1 flex-col overflow-hidden lg:min-h-0">
-
-                <GuessChat
-
-                  roomId={roomId}
-
-                  playerId={player.id}
-
-                  messages={chatMessages}
-
-                  isDrawer={isDrawer}
-
-                  hasGuessed={hasGuessed}
-
-                  wordLength={wordLength}
-
-                  wordDisplay={wordDisplay}
-
-                  secretWord={secretWord}
-
-                  disabled={phase !== "drawing"}
-
+                <ToolPanel
+                  color={color}
+                  size={brushSize}
+                  tool={tool}
+                  disabled={!isDrawer || phase !== "drawing"}
+                  onColorChange={setColor}
+                  onSizeChange={setBrushSize}
+                  onToolChange={setTool}
+                  onUndo={() => canvasRef.current?.undo()}
                 />
-
               </div>
 
-              <div className="doodle-card max-h-56 shrink-0 overflow-y-auto p-4">
-
-                <PlayerList players={players} showTurnOrder />
-
+              <div className="relative order-2 min-h-[22rem] lg:order-none lg:min-h-0">
+                <div className="flex h-full min-h-[22rem] flex-col lg:absolute lg:inset-0 lg:min-h-0">
+                  <GuessChat
+                    roomId={roomId}
+                    playerId={player.id}
+                    messages={chatMessages}
+                    isDrawer={isDrawer}
+                    hasGuessed={hasGuessed}
+                    wordLength={wordLength}
+                    wordDisplay={wordDisplay}
+                    secretWord={secretWord}
+                    disabled={phase !== "drawing"}
+                  />
+                </div>
               </div>
-
             </div>
 
+            {phase === "drawing" && (
+              <ReactionBar roomId={roomId} playerId={player.id} />
+            )}
           </div>
-
         )}
 
 

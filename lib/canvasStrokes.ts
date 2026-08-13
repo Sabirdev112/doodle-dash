@@ -16,9 +16,9 @@ function findPointIndex(points: Point[], target: Point): number {
 function withMergedPoints(
   existing: StrokeAction,
   incoming: StrokeAction,
-  points: Point[]
+  points: Point[],
+  startIndex = 0
 ): StrokeAction {
-  const start = Math.min(existing.startIndex ?? 0, incoming.startIndex ?? 0);
   return {
     ...existing,
     color: incoming.color ?? existing.color,
@@ -26,8 +26,31 @@ function withMergedPoints(
     isEraser: incoming.isEraser,
     opacity: incoming.opacity ?? existing.opacity,
     points,
-    startIndex: start > 0 ? start : undefined,
+    startIndex: startIndex > 0 ? startIndex : undefined,
   };
+}
+
+function mergeByStartIndex(
+  existing: StrokeAction,
+  incoming: StrokeAction
+): StrokeAction | null {
+  const e0 = existing.startIndex ?? 0;
+  const i0 = incoming.startIndex ?? 0;
+  const e1 = e0 + existing.points.length;
+  const i1 = i0 + incoming.points.length;
+  const origin = Math.min(e0, i0);
+  const end = Math.max(e1, i1);
+  const slots: Array<Point | undefined> = new Array(end - origin);
+
+  for (let i = 0; i < existing.points.length; i++) {
+    slots[e0 - origin + i] = existing.points[i];
+  }
+  for (let i = 0; i < incoming.points.length; i++) {
+    slots[i0 - origin + i] = incoming.points[i];
+  }
+
+  if (slots.some((point) => point == null)) return null;
+  return withMergedPoints(existing, incoming, slots as Point[], origin);
 }
 
 /** Merge an uploaded stroke chunk into an existing stroke when they share an id. */
@@ -41,6 +64,9 @@ export function mergeStrokeActions(
     return { ...incoming, points: [...incoming.points] };
   }
 
+  const indexed = mergeByStartIndex(existing, incoming);
+  if (indexed) return indexed;
+
   const ePts = existing.points;
   const iPts = incoming.points;
   const eFirst = ePts[0];
@@ -48,29 +74,23 @@ export function mergeStrokeActions(
   const iFirst = iPts[0];
   const iLast = iPts[iPts.length - 1];
 
-  // Incoming continues the current stroke (normal live case).
   if (pointsNear(eLast, iFirst)) {
     return withMergedPoints(existing, incoming, [...ePts, ...iPts.slice(1)]);
   }
 
-  // Incoming is the earlier prefix (Vercel HTTP / Pusher arrived out of order).
   if (pointsNear(iLast, eFirst)) {
     return withMergedPoints(existing, incoming, [...iPts, ...ePts.slice(1)]);
   }
 
-  // Incoming overlaps existing and may extend past the end.
   const overlapAt = findPointIndex(ePts, iFirst);
   if (overlapAt !== -1) {
-    if (overlapAt + iPts.length <= ePts.length) {
-      return existing;
-    }
+    if (overlapAt + iPts.length <= ePts.length) return existing;
     return withMergedPoints(existing, incoming, [
       ...ePts.slice(0, overlapAt),
       ...iPts,
     ]);
   }
 
-  // Existing starts inside incoming — prepend the missing head.
   const existingAt = findPointIndex(iPts, eFirst);
   if (existingAt !== -1) {
     const head = iPts.slice(0, existingAt);
@@ -79,21 +99,6 @@ export function mergeStrokeActions(
     return withMergedPoints(existing, incoming, [...head, ...ePts, ...tail]);
   }
 
-  if (
-    typeof incoming.startIndex === "number" &&
-    incoming.startIndex === ePts.length - 1
-  ) {
-    return withMergedPoints(existing, incoming, [...ePts, ...iPts.slice(1)]);
-  }
-
-  if (
-    typeof incoming.startIndex === "number" &&
-    incoming.startIndex + iPts.length - 1 === (existing.startIndex ?? 0)
-  ) {
-    return withMergedPoints(existing, incoming, [...iPts, ...ePts.slice(1)]);
-  }
-
-  // Never replace a longer stroke with a shorter out-of-order chunk.
   if (iPts.length > ePts.length) {
     return { ...incoming, points: [...iPts] };
   }

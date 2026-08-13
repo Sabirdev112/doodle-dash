@@ -28,6 +28,7 @@ export function splitStrokeForUpload(
       ...stroke,
       id: stroke.id,
       points: slice,
+      startIndex: (stroke.startIndex ?? 0) + start,
     });
 
     if (end >= stroke.points.length) break;

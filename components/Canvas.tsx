@@ -25,7 +25,11 @@ import {
   isStrokeEndExtension,
   mergeStrokeActions,
 } from "@/lib/canvasStrokes";
-import { STROKE_FLUSH_INTERVAL_MS } from "@/lib/types";
+import { splitStrokeForUpload } from "@/lib/strokeUpload";
+import {
+  STROKE_FLUSH_INTERVAL_MS,
+  STROKE_PERSIST_INTERVAL_MS,
+} from "@/lib/types";
 
 export interface CanvasHandle {
   undo: () => Promise<void>;
@@ -196,8 +200,10 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
   const strokeSeq = useRef(0);
   const uploadGen = useRef(0);
   const previewedPointCount = useRef(0);
-  const strokeQueue = useRef<Array<{ stroke: StrokeAction; seq: number }>>([]);
+  const strokeQueue = useRef<Array<{ stroke: StrokeAction }>>([]);
   const strokeSending = useRef(false);
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cursorRaf = useRef<number | null>(null);
   const renderedCount = useRef(0);
   const renderedPointCounts = useRef<Map<string, number>>(new Map());
   const fillInProgress = useRef(false);
@@ -224,11 +230,18 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     const container = containerRef.current;
     if (!container || !isDrawer || disabled) return;
     const rect = container.getBoundingClientRect();
-    setCursorPos({
+    const next = {
       x: e.clientX - rect.left,
       y: e.clientY - rect.top,
+    };
+    if (cursorRaf.current !== null) {
+      cancelAnimationFrame(cursorRaf.current);
+    }
+    cursorRaf.current = requestAnimationFrame(() => {
+      cursorRaf.current = null;
+      setCursorPos(next);
+      setCursorVisible(true);
     });
-    setCursorVisible(true);
   };
 
   const drawStroke = (
@@ -312,16 +325,20 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
       if (uploadGen.current !== gen) break;
       const item = strokeQueue.current.shift();
       if (!item) break;
-      try {
-        await sendAction({
-          type: "draw_strokes",
-          roomId,
-          playerId,
-          strokes: [item.stroke],
-          seq: item.seq,
-        });
-      } catch {
-        /* best-effort live persist */
+      const segments = splitStrokeForUpload(item.stroke);
+      for (const segment of segments) {
+        if (uploadGen.current !== gen) break;
+        try {
+          await sendAction({
+            type: "draw_strokes",
+            roomId,
+            playerId,
+            strokes: [segment],
+            seq: ++strokeSeq.current,
+          });
+        } catch {
+          /* best-effort persist */
+        }
       }
     }
     strokeSending.current = false;
@@ -330,26 +347,46 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     }
   }, [roomId, playerId]);
 
-  const sendStrokeChunk = useCallback(
-    (stroke: StrokeAction) => {
-      const seq = ++strokeSeq.current;
-      broadcastLiveStrokes([stroke], seq);
+  const queuePersist = useCallback(
+    (stroke: StrokeAction, immediate = false) => {
       const q = strokeQueue.current;
       const idx = q.findIndex((item) => item.stroke.id === stroke.id);
       if (idx !== -1) {
-        q[idx] = {
-          stroke: mergeStrokeActions(q[idx].stroke, stroke),
-          seq,
-        };
+        q[idx] = { stroke: mergeStrokeActions(q[idx].stroke, stroke) };
       } else if (q.length >= 8) {
         q.shift();
-        q.push({ stroke, seq });
+        q.push({ stroke });
       } else {
-        q.push({ stroke, seq });
+        q.push({ stroke });
       }
-      void flushStrokeQueue();
+
+      if (immediate) {
+        if (persistTimer.current !== null) {
+          clearTimeout(persistTimer.current);
+          persistTimer.current = null;
+        }
+        void flushStrokeQueue();
+        return;
+      }
+
+      if (persistTimer.current !== null) return;
+      persistTimer.current = setTimeout(() => {
+        persistTimer.current = null;
+        void flushStrokeQueue();
+      }, STROKE_PERSIST_INTERVAL_MS);
     },
     [flushStrokeQueue]
+  );
+
+  const sendStrokeChunk = useCallback(
+    (stroke: StrokeAction, immediatePersist = false) => {
+      const segments = splitStrokeForUpload(stroke);
+      for (const segment of segments) {
+        broadcastLiveStrokes([segment], ++strokeSeq.current);
+      }
+      queuePersist(stroke, immediatePersist);
+    },
+    [queuePersist]
   );
 
   const maybeStreamLiveStroke = useCallback(() => {
@@ -362,11 +399,14 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     if (points.length <= liveSentPointCount.current) return;
 
     const overlap = Math.max(0, liveSentPointCount.current - 1);
-    const chunkPoints = points.slice(overlap);
+    let chunkPoints = points.slice(overlap);
     if (chunkPoints.length < 2) return;
+    if (chunkPoints.length > 80) {
+      chunkPoints = chunkPoints.slice(0, 80);
+    }
 
     lastLiveSent.current = now;
-    liveSentPointCount.current = points.length;
+    liveSentPointCount.current = overlap + chunkPoints.length;
     sendStrokeChunk({
       ...buildStrokeAction(liveStrokeId.current, chunkPoints),
       startIndex: overlap,
@@ -484,7 +524,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
 
     lastRevision.current = revision;
     prevActionsRef.current = actions;
-  }, [actions, renderAction, redrawAll, drawStroke]);
+  }, [actions, renderAction, redrawAll]);
 
   const resizeCanvas = useCallback(() => {
     const container = containerRef.current;
@@ -519,6 +559,14 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     strokeSeq.current = 0;
     strokeQueue.current = [];
     strokeSending.current = false;
+    if (persistTimer.current !== null) {
+      clearTimeout(persistTimer.current);
+      persistTimer.current = null;
+    }
+    if (cursorRaf.current !== null) {
+      cancelAnimationFrame(cursorRaf.current);
+      cursorRaf.current = null;
+    }
     renderedPointCounts.current.clear();
     renderedCount.current = 0;
     lastRevision.current = "";
@@ -532,6 +580,14 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     return () => {
       uploadGen.current += 1;
       strokeQueue.current = [];
+      if (persistTimer.current !== null) {
+        clearTimeout(persistTimer.current);
+        persistTimer.current = null;
+      }
+      if (cursorRaf.current !== null) {
+        cancelAnimationFrame(cursorRaf.current);
+        cursorRaf.current = null;
+      }
     };
   }, [turnId]);
 
@@ -736,17 +792,19 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     const tail = stroke.points.slice(overlap);
     if (tail.length >= 1) {
       const tailPoints = tail.length === 1 ? [tail[0], { ...tail[0] }] : tail;
-      sendStrokeChunk({
-        ...buildStrokeAction(strokeId, tailPoints),
-        startIndex: overlap,
-      });
+      sendStrokeChunk(
+        {
+          ...buildStrokeAction(strokeId, tailPoints),
+          startIndex: overlap,
+        },
+        true
+      );
     }
     liveSentPointCount.current = 0;
   };
 
-  const onPointerLeave = (e: React.PointerEvent) => {
+  const onPointerLeave = () => {
     setCursorVisible(false);
-    onPointerUp(e);
   };
 
   const canDraw = isDrawer && !disabled;
@@ -754,7 +812,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
   return (
     <div
       ref={containerRef}
-      className="relative mx-auto aspect-[4/3] w-full max-w-[min(100%,40rem,calc(50vh*4/3))] overflow-hidden rounded-xl border-[3px] border-doodle-ink bg-white shadow-sketch"
+      className="relative aspect-[16/10] w-full overflow-hidden rounded-xl border-[3px] border-doodle-ink bg-white shadow-sketch"
       onPointerLeave={() => setCursorVisible(false)}
     >
       <canvas ref={bgRef} className="absolute inset-0 h-full w-full" />
@@ -766,6 +824,10 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onLostPointerCapture={(e) => {
+          if (isDrawing.current) onPointerUp(e);
+        }}
         onPointerLeave={onPointerLeave}
         onPointerEnter={updateCursor}
       />

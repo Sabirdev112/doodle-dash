@@ -17,8 +17,8 @@ import type {
 
 async function requestResync(roomId: string) {
   try {
-    const { sessionToken } = useGameStore.getState();
-    if (!sessionToken) return;
+    const { sessionToken, joinedRoomId } = useGameStore.getState();
+    if (!sessionToken || joinedRoomId !== roomId) return;
 
     const res = await fetch("/api/room/action", {
       method: "POST",
@@ -30,7 +30,10 @@ async function requestResync(roomId: string) {
     });
     const data = (await res.json()) as { ok?: boolean; snapshot?: RoomSnapshot };
     if (res.ok && data.ok && data.snapshot) {
-      useGameStore.getState().applyRoomSnapshot(data.snapshot);
+      const current = useGameStore.getState();
+      if (current.sessionToken && current.joinedRoomId === roomId) {
+        current.applyRoomSnapshot(data.snapshot);
+      }
     }
   } catch {
     /* best-effort */
@@ -382,18 +385,23 @@ export function usePusher(
 
     pusherRef.current = pusher;
 
+    let leftRoom = false;
     const heartbeat = window.setInterval(() => {
+      if (leftRoom) return;
+      const { sessionToken: token, joinedRoomId } = useGameStore.getState();
+      if (!token || joinedRoomId !== roomId) return;
       void fetch("/api/room/action", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ type: "ping", roomId }),
       });
     }, 15_000);
 
     return () => {
+      leftRoom = true;
       if (strokeFlushRaf.current !== null) {
         cancelAnimationFrame(strokeFlushRaf.current);
         strokeFlushRaf.current = null;
