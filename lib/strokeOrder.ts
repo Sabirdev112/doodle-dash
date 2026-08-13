@@ -1,6 +1,8 @@
 import type { StrokeAction } from "@/lib/types";
 import { STROKE_REORDER_STALL_MS } from "@/lib/types";
 
+const MAX_PENDING = 32;
+
 /** Buffer out-of-order stroke batches and apply them in sequence. */
 export function createStrokeOrderBuffer(
   apply: (strokes: StrokeAction[]) => void
@@ -18,10 +20,8 @@ export function createStrokeOrderBuffer(
 
   function drain() {
     while (pending.has(nextSeq)) {
-      const strokes = pending.get(nextSeq)!;
       pending.delete(nextSeq);
       nextSeq += 1;
-      if (strokes.length > 0) apply(strokes);
     }
   }
 
@@ -48,9 +48,17 @@ export function createStrokeOrderBuffer(
         return;
       }
 
+      // Always paint immediately so Vercel/Pusher reorder doesn't stall the line.
+      // Merge is idempotent, so a later in-order drain is a no-op.
+      apply(strokes);
+
       if (seq < nextSeq) return;
 
       pending.set(seq, strokes);
+      if (pending.size > MAX_PENDING) {
+        flushGap();
+        return;
+      }
       drain();
       if (pending.size > 0) scheduleStall();
     },

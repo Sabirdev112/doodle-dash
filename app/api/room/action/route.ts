@@ -61,6 +61,7 @@ const strokeSchema = z.object({
   points: z.array(pointSchema).min(1).max(100),
   isEraser: z.boolean(),
   opacity: z.number().min(0.1).max(1).optional(),
+  startIndex: z.number().int().min(0).max(50_000).optional(),
 });
 
 const fillSchema = z.object({

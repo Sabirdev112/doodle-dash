@@ -21,6 +21,10 @@ import { sendAction, useGameStore } from "@/lib/store";
 import CanvasCursor from "@/components/CanvasCursor";
 import { broadcastLiveStrokes } from "@/lib/liveDrawing";
 import { floodFillCanvas, floodFillImageData } from "@/lib/floodFill";
+import {
+  isStrokeEndExtension,
+  mergeStrokeActions,
+} from "@/lib/canvasStrokes";
 import { STROKE_FLUSH_INTERVAL_MS } from "@/lib/types";
 
 export interface CanvasHandle {
@@ -54,14 +58,24 @@ function strokeGrew(previous: CanvasAction[], next: CanvasAction[]): boolean {
   for (let i = 0; i < next.length; i++) {
     const n = next[i];
     const p = previous[i];
-    if (
-      n.type === "stroke" &&
-      p.type === "stroke" &&
-      n.id === p.id &&
-      n.points.length > p.points.length
-    ) {
+    if (n.type === "stroke" && p.type === "stroke" && isStrokeEndExtension(p, n)) {
       return true;
     }
+  }
+  return false;
+}
+
+function strokeNeedsFullRedraw(
+  previous: CanvasAction[],
+  next: CanvasAction[]
+): boolean {
+  if (next.length !== previous.length) return false;
+  for (let i = 0; i < next.length; i++) {
+    const n = next[i];
+    const p = previous[i];
+    if (n.type !== "stroke" || p.type !== "stroke" || n.id !== p.id) continue;
+    if (n.points.length === p.points.length) continue;
+    if (!isStrokeEndExtension(p, n)) return true;
   }
   return false;
 }
@@ -88,23 +102,12 @@ function drawSmoothPath(
   h: number
 ) {
   if (points.length === 0) return;
-  if (points.length === 1) {
-    ctx.lineTo(points[0].x * w, points[0].y * h);
-    return;
-  }
-  if (points.length === 2) {
-    ctx.lineTo(points[1].x * w, points[1].y * h);
-    return;
-  }
-
+  // Polyline (not quadratic): incremental chunks must connect exactly.
+  // Points are already interpolated densely on the drawer.
   ctx.moveTo(points[0].x * w, points[0].y * h);
-  for (let i = 1; i < points.length - 1; i++) {
-    const xc = ((points[i].x + points[i + 1].x) / 2) * w;
-    const yc = ((points[i].y + points[i + 1].y) / 2) * h;
-    ctx.quadraticCurveTo(points[i].x * w, points[i].y * h, xc, yc);
+  for (let i = 1; i < points.length; i++) {
+    ctx.lineTo(points[i].x * w, points[i].y * h);
   }
-  const last = points[points.length - 1];
-  ctx.lineTo(last.x * w, last.y * h);
 }
 
 function drawSoftEraserDabs(
@@ -191,6 +194,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
   const liveSentPointCount = useRef(0);
   const lastLiveSent = useRef(0);
   const strokeSeq = useRef(0);
+  const uploadGen = useRef(0);
   const previewedPointCount = useRef(0);
   const strokeQueue = useRef<Array<{ stroke: StrokeAction; seq: number }>>([]);
   const strokeSending = useRef(false);
@@ -303,7 +307,9 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
   const flushStrokeQueue = useCallback(async () => {
     if (strokeSending.current) return;
     strokeSending.current = true;
+    const gen = uploadGen.current;
     while (strokeQueue.current.length > 0) {
+      if (uploadGen.current !== gen) break;
       const item = strokeQueue.current.shift();
       if (!item) break;
       try {
@@ -319,13 +325,28 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
       }
     }
     strokeSending.current = false;
+    if (uploadGen.current === gen && strokeQueue.current.length > 0) {
+      void flushStrokeQueue();
+    }
   }, [roomId, playerId]);
 
   const sendStrokeChunk = useCallback(
     (stroke: StrokeAction) => {
       const seq = ++strokeSeq.current;
       broadcastLiveStrokes([stroke], seq);
-      strokeQueue.current.push({ stroke, seq });
+      const q = strokeQueue.current;
+      const idx = q.findIndex((item) => item.stroke.id === stroke.id);
+      if (idx !== -1) {
+        q[idx] = {
+          stroke: mergeStrokeActions(q[idx].stroke, stroke),
+          seq,
+        };
+      } else if (q.length >= 8) {
+        q.shift();
+        q.push({ stroke, seq });
+      } else {
+        q.push({ stroke, seq });
+      }
       void flushStrokeQueue();
     },
     [flushStrokeQueue]
@@ -346,7 +367,10 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
 
     lastLiveSent.current = now;
     liveSentPointCount.current = points.length;
-    sendStrokeChunk(buildStrokeAction(liveStrokeId.current, chunkPoints));
+    sendStrokeChunk({
+      ...buildStrokeAction(liveStrokeId.current, chunkPoints),
+      startIndex: overlap,
+    });
   }, [buildStrokeAction, sendStrokeChunk, tool]);
 
   const applyFillSync = (
@@ -413,7 +437,10 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     const bg = bgRef.current;
     const ctx = getCtx(bg);
 
-    if (actions.length < renderedCount.current) {
+    if (
+      actions.length < renderedCount.current ||
+      strokeNeedsFullRedraw(prevActionsRef.current, actions)
+    ) {
       renderedPointCounts.current.clear();
       redrawAll();
       prevActionsRef.current = actions;
@@ -488,11 +515,24 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
   }, [resizeCanvas]);
 
   useEffect(() => {
+    uploadGen.current += 1;
     strokeSeq.current = 0;
     strokeQueue.current = [];
     strokeSending.current = false;
     renderedPointCounts.current.clear();
+    renderedCount.current = 0;
+    lastRevision.current = "";
+    prevActionsRef.current = [];
     previewedPointCount.current = 0;
+    liveStrokeId.current = null;
+    liveSentPointCount.current = 0;
+    currentStroke.current = [];
+    isDrawing.current = false;
+    eraserPreviewFrom.current = 0;
+    return () => {
+      uploadGen.current += 1;
+      strokeQueue.current = [];
+    };
   }, [turnId]);
 
   const sendFill = async (action: FillAction) => {
@@ -696,7 +736,10 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     const tail = stroke.points.slice(overlap);
     if (tail.length >= 1) {
       const tailPoints = tail.length === 1 ? [tail[0], { ...tail[0] }] : tail;
-      sendStrokeChunk(buildStrokeAction(strokeId, tailPoints));
+      sendStrokeChunk({
+        ...buildStrokeAction(strokeId, tailPoints),
+        startIndex: overlap,
+      });
     }
     liveSentPointCount.current = 0;
   };
@@ -711,7 +754,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
   return (
     <div
       ref={containerRef}
-      className="relative aspect-[4/3] w-full overflow-hidden rounded-xl border-[3px] border-doodle-ink bg-white shadow-sketch"
+      className="relative mx-auto aspect-[4/3] w-full max-w-[min(100%,40rem,calc(50vh*4/3))] overflow-hidden rounded-xl border-[3px] border-doodle-ink bg-white shadow-sketch"
       onPointerLeave={() => setCursorVisible(false)}
     >
       <canvas ref={bgRef} className="absolute inset-0 h-full w-full" />

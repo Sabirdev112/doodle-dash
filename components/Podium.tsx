@@ -7,10 +7,18 @@ interface PodiumProps {
   standings: PublicPlayer[];
 }
 
+function podiumBarHeight(score: number, rankIndex: number, maxScore: number): number {
+  const rankScale = [1, 0.7, 0.48];
+  const scale = rankScale[rankIndex] ?? 0.4;
+  const byScore = maxScore > 0 ? score / maxScore : 0;
+  return Math.max(44, Math.round(byScore * scale * 140));
+}
+
 export default function Podium({ standings }: PodiumProps) {
   const top3 = standings.slice(0, 3);
   const rest = standings.slice(3);
   const medals = ["🥇", "🥈", "🥉"];
+  const maxScore = Math.max(...top3.map((p) => p.score), 1);
 
   return (
     <div className="doodle-card mx-auto max-w-lg space-y-6 p-8 text-center">
@@ -20,7 +28,6 @@ export default function Podium({ standings }: PodiumProps) {
         {[1, 0, 2].map((idx) => {
           const p = top3[idx];
           if (!p) return null;
-          const heights = ["h-24", "h-32", "h-20"];
           return (
             <div key={p.id} className="flex flex-col items-center">
               <span className="text-3xl">{medals[idx]}</span>
@@ -31,7 +38,8 @@ export default function Podium({ standings }: PodiumProps) {
               <p className="font-sketch text-lg">{p.name}</p>
               <p className="text-sm font-bold text-doodle-grape">{p.score} pts</p>
               <div
-                className={`mt-2 w-20 rounded-t-lg border-2 border-b-0 border-doodle-ink bg-doodle-yellow/60 ${heights[idx]}`}
+                className="mt-2 w-20 rounded-t-lg border-2 border-b-0 border-doodle-ink bg-doodle-yellow/60"
+                style={{ height: `${podiumBarHeight(p.score, idx, maxScore)}px` }}
               />
             </div>
           );

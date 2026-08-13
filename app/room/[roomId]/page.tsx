@@ -229,11 +229,11 @@ export default function RoomPage({
 
   return (
 
-    <main className="min-h-screen px-4 py-6">
+    <main className="min-h-screen px-4 py-4">
 
-      <div className="mx-auto max-w-7xl">
+      <div className="mx-auto max-w-6xl">
 
-        <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
+        <header className="mb-4 flex flex-wrap items-center justify-between gap-4">
 
           <div>
 
@@ -327,7 +327,7 @@ export default function RoomPage({
 
         {inGameBoard && (
 
-          <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-stretch">
 
             <div className="space-y-4">
 
@@ -428,15 +428,15 @@ export default function RoomPage({
 
             </div>
 
-            <div className="flex flex-col gap-4">
+            <div className="flex min-h-[24rem] flex-col gap-4 lg:max-h-[calc(100vh-6rem)]">
 
-              <div className="doodle-card p-4">
+              <div className="doodle-card shrink-0 p-4">
 
                 <Scoreboard players={players} />
 
               </div>
 
-              <div className="min-h-[300px] flex-1">
+              <div className="flex min-h-[220px] flex-1 flex-col overflow-hidden lg:min-h-0">
 
                 <GuessChat
 
@@ -462,7 +462,7 @@ export default function RoomPage({
 
               </div>
 
-              <div className="doodle-card p-4">
+              <div className="doodle-card max-h-56 shrink-0 overflow-y-auto p-4">
 
                 <PlayerList players={players} showTurnOrder />
 

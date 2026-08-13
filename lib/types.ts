@@ -52,6 +52,8 @@ export interface StrokeAction {
   isEraser: boolean;
   /** Pencil strokes use partial opacity; pen defaults to 1. */
   opacity?: number;
+  /** Index of points[0] in the full stroke — set on live chunks for out-of-order merge. */
+  startIndex?: number;
 }
 
 export interface FillAction {
@@ -222,7 +224,7 @@ export const ALL_GUESSED_HOLD_MS = 1_500;
 /** Client stroke-batch interval — keep close to the live flush cadence. */
 export const STROKE_FLUSH_INTERVAL_MS = 40;
 /** How long guessers wait for a missing stroke seq before skipping the gap. */
-export const STROKE_REORDER_STALL_MS = 100;
+export const STROKE_REORDER_STALL_MS = 250;
 /** First letter hint at this fraction of the turn. */
 export const HINT_FIRST_AT = 0.3;
 /** Additional letter hints every this fraction after the first. */

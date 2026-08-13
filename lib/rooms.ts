@@ -1109,17 +1109,12 @@ export async function handleDrawStrokes(
     ) {
       continue;
     }
-
-    const last = room.canvasActions[room.canvasActions.length - 1];
-    if (last?.type === "stroke" && last.id === stroke.id) {
-      last.points.push(...stroke.points.slice(1));
-    } else {
-      room.canvasActions.push({ ...stroke, points: [...stroke.points] });
-    }
     accepted.push({ ...stroke, points: [...stroke.points] });
   }
 
   if (accepted.length === 0) return false;
+
+  room.canvasActions = applyCanvasStrokeUpdates(room.canvasActions, accepted);
 
   const batchSeq =
     typeof seq === "number" && Number.isFinite(seq) && seq > 0
