@@ -3,9 +3,11 @@ import { z } from "zod";
 import {
   disbandRoom,
   ensureRoom,
+  getOrLoadRoom,
   getRoom,
   getRoomSnapshot,
   handleDrawStrokes,
+  resolveRoomDeadlines,
   handleFill,
   handleGuess,
   handleUndo,
@@ -84,6 +86,7 @@ const actionSchema = z.discriminatedUnion("type", [
       .optional(),
     customWords: z.string().max(5000).optional(),
     hintsEnabled: z.boolean().optional(),
+    maxHints: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
     wordMode: z.enum(["normal", "hidden"]).optional(),
   }),
   z.object({
@@ -114,6 +117,7 @@ const actionSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("resync"), roomId: z.string(), playerId: z.string().optional() }),
   z.object({ type: z.literal("ping"), roomId: z.string(), playerId: z.string().optional() }),
+  z.object({ type: z.literal("resolve_deadlines"), roomId: z.string(), playerId: z.string().optional() }),
   z.object({ type: z.literal("leave"), roomId: z.string(), playerId: z.string().optional() }),
   z.object({
     type: z.literal("reaction"),
@@ -155,7 +159,10 @@ export async function POST(req: NextRequest) {
     }
     const playerId = session.playerId;
 
-    const room = await ensureRoom(action.roomId);
+    const room =
+      action.type === "draw_strokes"
+        ? await getOrLoadRoom(action.roomId)
+        : await ensureRoom(action.roomId);
     if (!room) {
       return NextResponse.json({ error: "Room not found" }, { status: 404 });
     }
@@ -248,6 +255,13 @@ export async function POST(req: NextRequest) {
       }
       case "ping": {
         return NextResponse.json({ ok: true });
+      }
+      case "resolve_deadlines": {
+        const resolved = await resolveRoomDeadlines(action.roomId);
+        if (!resolved) return NextResponse.json({ ok: false }, { status: 404 });
+        const snapshot = getRoomSnapshot(resolved, playerId);
+        delete snapshot.canvasActions;
+        return NextResponse.json({ ok: true, snapshot });
       }
       case "leave": {
         await leaveRoom(action.roomId, playerId);

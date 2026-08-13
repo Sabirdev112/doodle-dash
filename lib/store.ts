@@ -15,6 +15,7 @@ import type {
   TurnPointAward,
 } from "@/lib/types";
 import { applyCanvasStrokeUpdates } from "./canvasStrokes";
+import { MAX_CHAT_MESSAGES } from "./types";
 import {
   clearPersistedSession,
   loadPersistedSession,
@@ -171,7 +172,9 @@ export const useGameStore = create<GameStore>()((set, get) => ({
     })),
 
   addChatMessage: (msg) =>
-    set((state) => ({ chatMessages: [...state.chatMessages, msg] })),
+    set((state) => ({
+      chatMessages: [...state.chatMessages, msg].slice(-MAX_CHAT_MESSAGES),
+    })),
 
   addReaction: (reaction) =>
     set((state) => ({
@@ -300,17 +303,22 @@ export const useGameStore = create<GameStore>()((set, get) => ({
             : null,
         turnEndTime: snapshot.turnEndTime,
         canvasActions:
-          snapshot.canvasActions !== undefined
-            ? snapshot.canvasActions
-            : nextPhase === "drawing" && state.phase !== "drawing"
-              ? []
-              : state.canvasActions,
+          nextPhase !== "drawing"
+            ? []
+            : snapshot.canvasActions !== undefined
+              ? state.phase === "drawing" &&
+                (snapshot.turnId ?? state.turnId) === state.turnId &&
+                state.canvasActions.length > 0
+                ? state.canvasActions
+                : snapshot.canvasActions
+              : state.phase === "drawing"
+                ? state.canvasActions
+                : [],
         chatMessages:
           snapshot.chatMessages !== undefined
-            ? snapshot.chatMessages
-            : nextPhase === "word_select" && nextPhase !== state.phase
-              ? []
-              : state.chatMessages,
+            ? snapshot.chatMessages.slice(-MAX_CHAT_MESSAGES)
+            : state.chatMessages,
+        reactions: newTurn ? [] : state.reactions,
         finalStandings: snapshot.finalStandings ?? null,
         crownHolderId: snapshot.players.find((p) => p.hasCrown)?.id ?? null,
         drawerName:
@@ -403,6 +411,19 @@ export async function apiJoinRoom(
 export async function requestRoomResync(roomId: string): Promise<void> {
   try {
     const res = await sendAction({ type: "resync", roomId });
+    const data = (await res.json()) as { ok?: boolean; snapshot?: RoomSnapshot };
+    if (res.ok && data.ok && data.snapshot) {
+      useGameStore.getState().applyRoomSnapshot(data.snapshot);
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Resolve KV deadlines without replacing the live canvas. */
+export async function requestResolveDeadlines(roomId: string): Promise<void> {
+  try {
+    const res = await sendAction({ type: "resolve_deadlines", roomId });
     const data = (await res.json()) as { ok?: boolean; snapshot?: RoomSnapshot };
     if (res.ok && data.ok && data.snapshot) {
       useGameStore.getState().applyRoomSnapshot(data.snapshot);

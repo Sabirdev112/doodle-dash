@@ -77,7 +77,9 @@ export default function GuessChat({
                 ? "font-semibold text-doodle-mint"
                 : msg.kind === "close"
                   ? "text-amber-600"
-                  : "text-doodle-ink"
+                  : msg.kind === "reaction"
+                    ? "text-doodle-grape"
+                    : "text-doodle-ink"
             }`}
           >
             <AvatarDisplay

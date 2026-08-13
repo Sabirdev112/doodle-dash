@@ -16,6 +16,7 @@ import type {
   CanvasAction,
   ChatMessage,
   FillAction,
+  GamePhase,
   Player,
   PublicPlayer,
   ReactionEvent,
@@ -36,13 +37,20 @@ import {
   PLAYER_RECONNECT_GRACE_MS,
 } from "./types";
 import { buildWordPool, DEFAULT_WORDS } from "./words";
+import { cleanupRateLimits } from "./rateLimit";
 import {
   deletePersistedRoom,
   isRoomPersistenceEnabled,
   loadPersistedRoom,
   savePersistedRoom,
+  withRoomLock,
 } from "./roomPersistence";
-
+import { applyCanvasStrokeUpdates } from "./canvasStrokes";
+import {
+  expectedHintCount,
+  letterHintCount,
+  maxHintsForWord,
+} from "./hints";
 const generateRoomId = customAlphabet(
   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
   8
@@ -58,6 +66,7 @@ globalForRooms.__doodleDashRooms = rooms;
 
 setInterval(() => {
   cleanupExpiredRooms();
+  cleanupRateLimits();
   for (const room of rooms.values()) {
     pruneInactivePlayers(room);
   }
@@ -82,6 +91,31 @@ function clearRoomTimers(room: Room): void {
   room.hintTimer = null;
 }
 
+/** Drop per-turn ink/hints so Redis and memory stay small between turns. */
+function discardTurnScratch(room: Room): void {
+  room.canvasActions = [];
+  room.strokeSeq = 0;
+  room.hintRevealed = [];
+  room.wordChoices = [];
+  room.drawingStarted = false;
+}
+
+/** After the final podium, drop word lists too. Keep scores + chat. */
+function discardEndedScratch(room: Room): void {
+  discardTurnScratch(room);
+  clearRoomTimers(room);
+  room.wordPool = [];
+  room.usedWords = [];
+  room.secretWord = null;
+  room.wordChoiceDeadline = null;
+  room.phaseDeadline = null;
+  room.turnStartTime = null;
+  room.turnEndTime = null;
+  room.correctGuessers = [];
+  room.correctGuessPoints = [];
+  room.lastGuessTime = null;
+}
+
 async function persistRoom(room: Room): Promise<void> {
   room.updatedAt = Date.now();
   rooms.set(room.id, room);
@@ -93,36 +127,133 @@ export async function saveRoomState(roomId: string): Promise<void> {
   if (room) await persistRoom(room);
 }
 
-function rescheduleTimers(room: Room): void {
-  clearRoomTimers(room);
+const PHASE_RANK: Record<GamePhase, number> = {
+  waiting: 0,
+  word_select: 1,
+  drawing: 2,
+  turn_end: 3,
+  ended: 4,
+};
 
+function isPhaseRegression(cached: Room, incoming: Room): boolean {
+  if (cached.turnId && incoming.turnId && cached.turnId === incoming.turnId) {
+    return PHASE_RANK[incoming.phase] < PHASE_RANK[cached.phase];
+  }
+  return false;
+}
+
+function mergeDrawingCanvas(
+  local: Room["canvasActions"],
+  incoming: Room["canvasActions"]
+): Room["canvasActions"] {
+  const strokes = incoming.filter(
+    (action): action is StrokeAction => action.type === "stroke"
+  );
+  let merged = applyCanvasStrokeUpdates(local, strokes);
+  for (const action of incoming) {
+    if (action.type === "fill" && !merged.some((item) => item.id === action.id)) {
+      merged = [...merged, action];
+    }
+  }
+  return merged;
+}
+
+function adoptPersistedRoom(cached: Room, persisted: Room): Room {
+  if (isPhaseRegression(cached, persisted)) {
+    return cached;
+  }
   if (
-    room.phase === "word_select" &&
-    room.wordChoiceDeadline &&
-    room.drawerId &&
-    room.wordChoices.length > 0
+    cached.phase === "drawing" &&
+    persisted.phase === "drawing" &&
+    cached.turnId === persisted.turnId
   ) {
-    const remaining = room.wordChoiceDeadline - Date.now();
-    const drawerId = room.drawerId;
-    const fallbackWord = room.wordChoices[0];
-    if (remaining > 0) {
-      room.wordChoiceTimer = setTimeout(() => {
-        void pickWord(room.id, drawerId, fallbackWord);
-      }, remaining);
+    persisted.canvasActions = mergeDrawingCanvas(
+      cached.canvasActions,
+      persisted.canvasActions
+    );
+    persisted.strokeSeq = Math.max(cached.strokeSeq ?? 0, persisted.strokeSeq ?? 0);
+  }
+  return persisted;
+}
+
+/** Load room for hot paths (strokes) — do not run deadlines or replace a live canvas. */
+export async function getOrLoadRoom(roomId: string): Promise<Room | undefined> {
+  const cached = rooms.get(roomId);
+  if (cached) {
+    if (Date.now() - cached.createdAt > ROOM_TTL_MS) {
+      clearRoomTimers(cached);
+      rooms.delete(roomId);
+      return undefined;
     }
+    return cached;
+  }
+  if (isRoomPersistenceEnabled()) {
+    const persisted = await loadPersistedRoom(roomId);
+    if (!persisted) return undefined;
+    if (Date.now() - persisted.createdAt > ROOM_TTL_MS) {
+      await deletePersistedRoom(roomId);
+      return undefined;
+    }
+    rooms.set(roomId, persisted);
+    return persisted;
+  }
+  return getRoom(roomId);
+}
+
+async function loadFreshRoom(roomId: string): Promise<Room | undefined> {
+  if (isRoomPersistenceEnabled()) {
+    const persisted = await loadPersistedRoom(roomId);
+    if (!persisted) {
+      const cached = rooms.get(roomId);
+      if (cached) clearRoomTimers(cached);
+      rooms.delete(roomId);
+      return undefined;
+    }
+    const cached = rooms.get(roomId);
+    const next = cached ? adoptPersistedRoom(cached, persisted) : persisted;
+    if (cached && next !== cached) clearRoomTimers(cached);
+    rooms.set(roomId, next);
+    return next;
+  }
+  return getRoom(roomId);
+}
+
+async function syncHintsToElapsed(room: Room): Promise<boolean> {
+  if (
+    !room.settings.hintsEnabled ||
+    room.phase !== "drawing" ||
+    !room.secretWord ||
+    !room.turnStartTime
+  ) {
+    return false;
   }
 
-  if (room.phase === "drawing" && room.turnEndTime) {
-    const remaining = room.turnEndTime - Date.now();
-    if (remaining > 0) {
-      room.turnTimer = setTimeout(() => {
-        void endTurn(room.id);
-      }, remaining);
-      if (room.settings.hintsEnabled && room.secretWord) {
-        startHintTimer(room);
-      }
-    }
+  const durationMs = room.settings.turnDuration * 1000;
+  if (durationMs <= 0) return false;
+  const elapsedRatio = (Date.now() - room.turnStartTime) / durationMs;
+  const maxHints = maxHintsForWord(
+    room.secretWord,
+    room.settings.maxHints ?? 3
+  );
+  const want = expectedHintCount(elapsedRatio, maxHints);
+  let have = letterHintCount(room.secretWord, room.hintRevealed);
+  if (have >= want) return false;
+
+  let changed = false;
+  while (have < want) {
+    const hidden = room.secretWord
+      .split("")
+      .map((ch, i) => ({ ch, i }))
+      .filter(({ ch, i }) => ch !== " " && !room.hintRevealed[i]);
+    if (hidden.length === 0) break;
+    const pick = hidden[Math.floor(Math.random() * hidden.length)];
+    room.hintRevealed[pick.i] = true;
+    have += 1;
+    changed = true;
   }
+
+  if (changed) await broadcastWordDisplay(room);
+  return changed;
 }
 
 async function processDeadlines(room: Room): Promise<void> {
@@ -134,7 +265,7 @@ async function processDeadlines(room: Room): Promise<void> {
     now >= room.phaseDeadline
   ) {
     room.phaseDeadline = null;
-    await advanceTurn(room.id);
+    await advanceTurnUnlocked(room);
     return;
   }
 
@@ -145,13 +276,28 @@ async function processDeadlines(room: Room): Promise<void> {
     room.drawerId &&
     room.wordChoices.length > 0
   ) {
-    await pickWord(room.id, room.drawerId, room.wordChoices[0]);
+    await applyPickWord(room, room.drawerId, room.wordChoices[0]);
     return;
   }
 
   if (room.phase === "drawing" && room.turnEndTime && now >= room.turnEndTime) {
-    await endTurn(room.id);
+    await endTurnUnlocked(room);
+    return;
   }
+
+  if (room.phase === "drawing") {
+    await syncHintsToElapsed(room);
+  }
+}
+
+export async function resolveRoomDeadlines(roomId: string): Promise<Room | undefined> {
+  return withRoomLock(roomId, async () => {
+    const room = await loadFreshRoom(roomId);
+    if (!room) return undefined;
+    await processDeadlines(room);
+    await persistRoom(room);
+    return rooms.get(roomId);
+  });
 }
 
 export async function ensureRoom(roomId: string): Promise<Room | undefined> {
@@ -165,10 +311,12 @@ export async function ensureRoom(roomId: string): Promise<Room | undefined> {
     }
 
     const cached = rooms.get(roomId);
-    if (!cached || persisted.updatedAt > cached.updatedAt) {
-      if (cached) clearRoomTimers(cached);
+    if (!cached) {
       rooms.set(roomId, persisted);
-      rescheduleTimers(persisted);
+    } else if (persisted.updatedAt > cached.updatedAt) {
+      const next = adoptPersistedRoom(cached, persisted);
+      if (next !== cached) clearRoomTimers(cached);
+      rooms.set(roomId, next);
     }
 
     const room = rooms.get(roomId);
@@ -182,7 +330,6 @@ export async function ensureRoom(roomId: string): Promise<Room | undefined> {
     }
 
     pruneInactivePlayers(room);
-    await processDeadlines(room);
     return rooms.get(roomId);
   }
 
@@ -196,7 +343,6 @@ export async function ensureRoom(roomId: string): Promise<Room | undefined> {
   }
 
   pruneInactivePlayers(room);
-  await processDeadlines(room);
   return rooms.get(roomId);
 }
 
@@ -310,6 +456,7 @@ async function advanceAfterDrawerRemoved(room: Room): Promise<void> {
     room.currentRound++;
     if (room.currentRound > room.settings.rounds) {
       room.phase = "ended";
+      discardEndedScratch(room);
       await broadcastRoomState(room.id);
       return;
     }
@@ -383,6 +530,7 @@ export async function createRoom(
   settings: Omit<RoomSettings, "customWords"> & {
     customWords?: string | string[];
     hintsEnabled?: boolean;
+    maxHints?: RoomSettings["maxHints"];
     wordMode?: RoomSettings["wordMode"];
   },
   ownerId: string,
@@ -409,6 +557,7 @@ export async function createRoom(
       turnDuration: settings.turnDuration,
       customWords,
       hintsEnabled: settings.hintsEnabled ?? true,
+      maxHints: settings.maxHints ?? 3,
       wordMode: settings.wordMode ?? "normal",
     },
     players: new Map(),
@@ -427,6 +576,7 @@ export async function createRoom(
     turnEndTime: null,
     canvasActions: [],
     correctGuessers: [],
+    correctGuessPoints: [],
     chatMessages: [],
     crownHolderId: null,
     turnTimer: null,
@@ -649,6 +799,9 @@ export function updateRoomSettings(
   if (settings.hintsEnabled !== undefined) {
     room.settings.hintsEnabled = settings.hintsEnabled;
   }
+  if (settings.maxHints !== undefined) {
+    room.settings.maxHints = settings.maxHints;
+  }
   if (settings.wordMode !== undefined) {
     room.settings.wordMode = settings.wordMode;
   }
@@ -699,12 +852,15 @@ export function getRoomSnapshot(room: Room, playerId: string): RoomSnapshot {
     turnStartTime: room.turnStartTime,
     wordChoiceDeadline: room.wordChoiceDeadline ?? undefined,
     phaseDeadline: room.phaseDeadline,
-    canvasActions: room.canvasActions,
     chatMessages: room.chatMessages,
     correctGuessers: room.correctGuessers,
     drawingStarted: room.drawingStarted,
     updatedAt: room.updatedAt,
   };
+
+  if (room.phase === "drawing") {
+    snapshot.canvasActions = room.canvasActions;
+  }
 
   if (isDrawer && room.secretWord) {
     snapshot.secretWord = room.secretWord;
@@ -780,18 +936,17 @@ export async function broadcastRoomState(roomId: string): Promise<void> {
 }
 
 async function startWordSelection(room: Room): Promise<void> {
-  const drawerId = room.drawerId!;
   room.phase = "word_select";
   room.turnId = nanoid();
   room.strokeSeq = 0;
   room.secretWord = null;
   room.correctGuessers = [];
-  room.chatMessages = [];
+  room.correctGuessPoints = [];
   room.turnStartTime = null;
   room.turnEndTime = null;
-  room.drawingStarted = false;
-  room.hintRevealed = [];
   room.lastGuessTime = null;
+  room.lastTurnPointAwards = [];
+  discardTurnScratch(room);
 
   for (const id of room.playerOrder) {
     const p = room.players.get(id);
@@ -812,45 +967,36 @@ async function startWordSelection(room: Room): Promise<void> {
   room.phaseDeadline = null;
 
   await broadcastRoomState(room.id);
-  await persistRoom(room);
-
-  if (room.wordChoiceTimer) clearTimeout(room.wordChoiceTimer);
-  room.wordChoiceTimer = setTimeout(() => {
-    const r = getRoom(room.id);
-    if (r && r.phase === "word_select" && r.drawerId === drawerId) {
-      void pickWord(room.id, drawerId, r.wordChoices[0]);
-    }
-  }, WORD_CHOICE_TIMEOUT_MS);
 }
 
 export async function startGame(
   roomId: string,
   playerId: string
 ): Promise<boolean> {
-  const room = getRoom(roomId);
-  if (!room) return false;
-  const player = room.players.get(playerId);
-  if (!player?.isOwner || room.phase !== "waiting") return false;
-  if (room.players.size < 2) return false;
+  return (
+    (await withRoomLock(roomId, async () => {
+      const room = await loadFreshRoom(roomId);
+      if (!room) return false;
+      const player = room.players.get(playerId);
+      if (!player?.isOwner || room.phase !== "waiting") return false;
+      if (room.players.size < 2) return false;
 
-  room.currentRound = 1;
-  room.currentTurnIndex = Math.floor(Math.random() * room.playerOrder.length);
-  room.drawerId = room.playerOrder[room.currentTurnIndex];
+      room.currentRound = 1;
+      room.currentTurnIndex = Math.floor(Math.random() * room.playerOrder.length);
+      room.drawerId = room.playerOrder[room.currentTurnIndex];
 
-  await startWordSelection(room);
-  await persistRoom(room);
-  return true;
+      await startWordSelection(room);
+      await persistRoom(room);
+      return true;
+    })) ?? false
+  );
 }
 
-export async function pickWord(
-  roomId: string,
+async function applyPickWord(
+  room: Room,
   playerId: string,
   word: string
 ): Promise<boolean> {
-  const room = getRoom(roomId);
-  if (!room) return false;
-
-  // Idempotent: a late auto-pick after the turn already started is a no-op success.
   if (room.phase === "drawing" && room.drawerId === playerId) {
     return true;
   }
@@ -876,6 +1022,8 @@ export async function pickWord(
   room.turnStartTime = Date.now();
   room.turnEndTime = Date.now() + room.settings.turnDuration * 1000;
   room.canvasActions = [];
+  room.correctGuessers = [];
+  room.correctGuessPoints = [];
   room.drawingStarted = false;
   room.hintRevealed = new Array(chosen.length).fill(false);
   room.lastGuessTime = null;
@@ -887,7 +1035,7 @@ export async function pickWord(
     room.drawingStarted
   );
 
-  await triggerRoomEvents(roomId, [
+  await triggerRoomEvents(room.id, [
     { event: "canvas_cleared", payload: {} },
     {
       event: "turn_started",
@@ -902,53 +1050,23 @@ export async function pickWord(
     },
   ]);
 
-  if (room.turnTimer) clearTimeout(room.turnTimer);
-  room.turnTimer = setTimeout(() => {
-    void endTurn(roomId);
-  }, room.settings.turnDuration * 1000);
-
-  if (room.settings.hintsEnabled) {
-    startHintTimer(room);
-  }
-
-  await persistRoom(room);
   return true;
 }
 
-function startHintTimer(room: Room): void {
-  if (room.hintTimer) clearInterval(room.hintTimer);
-  const word = room.secretWord;
-  if (!word) return;
-
-  const durationMs = room.settings.turnDuration * 1000;
-  const intervalMs = Math.max(5000, Math.floor(durationMs / 4));
-
-  room.hintTimer = setInterval(() => {
-    const r = getRoom(room.id);
-    if (!r || r.phase !== "drawing" || !r.secretWord) return;
-
-    const hidden = r.secretWord
-      .split("")
-      .map((ch, i) => ({ ch, i }))
-      .filter(({ ch, i }) => ch !== " " && !r.hintRevealed[i]);
-
-    if (hidden.length === 0) return;
-
-    const pick = hidden[Math.floor(Math.random() * hidden.length)];
-    r.hintRevealed[pick.i] = true;
-
-    const { wordLength, wordDisplay } = buildWordDisplay(
-      r.secretWord,
-      r.hintRevealed,
-      r.settings.wordMode,
-      r.drawingStarted
-    );
-
-    void triggerRoomEvent(r.id, {
-      event: "hint_update",
-      payload: { wordLength, wordDisplay },
-    });
-  }, intervalMs);
+export async function pickWord(
+  roomId: string,
+  playerId: string,
+  word: string
+): Promise<boolean> {
+  return (
+    (await withRoomLock(roomId, async () => {
+      const room = await loadFreshRoom(roomId);
+      if (!room) return false;
+      const ok = await applyPickWord(room, playerId, word);
+      if (ok) await persistRoom(room);
+      return ok;
+    })) ?? false
+  );
 }
 
 async function broadcastWordDisplay(room: Room): Promise<void> {
@@ -970,7 +1088,7 @@ export async function handleDrawStrokes(
   strokes: StrokeAction[],
   seq?: number
 ): Promise<boolean> {
-  const room = getRoom(roomId);
+  const room = await getOrLoadRoom(roomId);
   if (!room) return false;
   if (room.phase !== "drawing" || room.drawerId !== playerId) return false;
   if (room.canvasActions.length >= MAX_CANVAS_ACTIONS_PER_TURN) return false;
@@ -1013,7 +1131,7 @@ export async function handleDrawStrokes(
     event: "draw_strokes",
     payload: { strokes: accepted, seq: batchSeq },
   });
-  void persistRoom(room);
+  await persistRoom(room);
   return true;
 }
 
@@ -1076,7 +1194,14 @@ export async function handleGuess(
     room.lastGuessTime = Date.now();
 
     const place = room.correctGuessers.length;
-    const pointsEarned = getGuesserPoints(place);
+    const durationMs = room.settings.turnDuration * 1000;
+    const elapsedRatio =
+      room.turnStartTime && durationMs > 0
+        ? Math.min(1, Math.max(0, (Date.now() - room.turnStartTime) / durationMs))
+        : 0;
+    const pointsEarned = getGuesserPoints(place, elapsedRatio);
+    if (!room.correctGuessPoints) room.correctGuessPoints = [];
+    room.correctGuessPoints.push(pointsEarned);
     player.score += pointsEarned;
     if (player.score > 0 && !player.crownReachedAt) {
       player.crownReachedAt = Date.now();
@@ -1117,11 +1242,6 @@ export async function handleGuess(
         room.turnEndTime,
         Date.now() + ALL_GUESSED_HOLD_MS
       );
-      if (room.turnTimer) {
-        clearTimeout(room.turnTimer);
-        const remaining = Math.max(0, room.turnEndTime - Date.now());
-        room.turnTimer = setTimeout(() => void endTurn(roomId), remaining);
-      }
       await broadcastRoomState(roomId);
     }
     return true;
@@ -1158,9 +1278,8 @@ export async function handleGuess(
   return true;
 }
 
-async function endTurn(roomId: string): Promise<void> {
-  const room = getRoom(roomId);
-  if (!room || room.phase !== "drawing") return;
+async function endTurnUnlocked(room: Room): Promise<void> {
+  if (room.phase !== "drawing") return;
 
   const endedTurnId = room.turnId;
   room.phase = "turn_end";
@@ -1201,7 +1320,7 @@ async function endTurn(roomId: string): Promise<void> {
         playerId,
         name: p.name,
         avatar: p.avatar,
-        points: getGuesserPoints(index + 1),
+        points: room.correctGuessPoints[index] ?? getGuesserPoints(index + 1),
       };
     })
     .filter((award): award is NonNullable<typeof award> => award !== null);
@@ -1218,7 +1337,7 @@ async function endTurn(roomId: string): Promise<void> {
   turnPointAwards.sort((a, b) => b.points - a.points);
   room.lastTurnPointAwards = turnPointAwards;
 
-  await triggerRoomEvent(roomId, {
+  await triggerRoomEvent(room.id, {
     event: "turn_ended",
     payload: {
       turnId: endedTurnId,
@@ -1230,14 +1349,13 @@ async function endTurn(roomId: string): Promise<void> {
   });
 
   room.currentTurnIndex++;
+  discardTurnScratch(room);
 
-  await broadcastRoomState(roomId);
-  await persistRoom(room);
+  await broadcastRoomState(room.id);
 }
 
-async function advanceTurn(roomId: string): Promise<void> {
-  const room = getRoom(roomId);
-  if (!room || room.phase !== "turn_end") return;
+async function advanceTurnUnlocked(room: Room): Promise<void> {
+  if (room.phase !== "turn_end") return;
 
   room.phaseDeadline = null;
 
@@ -1247,12 +1365,12 @@ async function advanceTurn(roomId: string): Promise<void> {
 
     if (room.currentRound > room.settings.rounds) {
       room.phase = "ended";
-      await broadcastRoomState(roomId);
-      await persistRoom(room);
+      discardEndedScratch(room);
+      await broadcastRoomState(room.id);
       return;
     }
 
-    await triggerRoomEvent(roomId, {
+    await triggerRoomEvent(room.id, {
       event: "round_info",
       payload: {
         currentRound: room.currentRound,
@@ -1277,7 +1395,6 @@ export async function resyncRoom(
   if (!room || !room.players.has(playerId)) return null;
 
   touchPlayer(room, playerId);
-  await persistRoom(room);
   return getRoomSnapshot(room, playerId);
 }
 
@@ -1301,10 +1418,22 @@ export async function handleReaction(
     timestamp: Date.now(),
   };
 
-  await triggerRoomEvent(roomId, {
-    event: "reaction",
-    payload: reaction,
-  });
+  const message: ChatMessage = {
+    id: nanoid(),
+    playerId,
+    playerName: player.name,
+    avatar: player.avatar,
+    text: `reacted with ${emoji}`,
+    kind: "reaction",
+    timestamp: Date.now(),
+  };
+  room.chatMessages.push(message);
+  trimChatMessages(room);
+
+  await triggerRoomEvents(roomId, [
+    { event: "reaction", payload: reaction },
+    { event: "guess_result", payload: message },
+  ]);
   return true;
 }
 

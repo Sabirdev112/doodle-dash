@@ -192,6 +192,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
   const lastLiveSent = useRef(0);
   const strokeSeq = useRef(0);
   const previewedPointCount = useRef(0);
+  const strokeQueue = useRef<Array<{ stroke: StrokeAction; seq: number }>>([]);
+  const strokeSending = useRef(false);
   const renderedCount = useRef(0);
   const renderedPointCounts = useRef<Map<string, number>>(new Map());
   const fillInProgress = useRef(false);
@@ -298,21 +300,35 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     [color, size, tool]
   );
 
+  const flushStrokeQueue = useCallback(async () => {
+    if (strokeSending.current) return;
+    strokeSending.current = true;
+    while (strokeQueue.current.length > 0) {
+      const item = strokeQueue.current.shift();
+      if (!item) break;
+      try {
+        await sendAction({
+          type: "draw_strokes",
+          roomId,
+          playerId,
+          strokes: [item.stroke],
+          seq: item.seq,
+        });
+      } catch {
+        /* best-effort live persist */
+      }
+    }
+    strokeSending.current = false;
+  }, [roomId, playerId]);
+
   const sendStrokeChunk = useCallback(
     (stroke: StrokeAction) => {
       const seq = ++strokeSeq.current;
       broadcastLiveStrokes([stroke], seq);
-      void sendAction({
-        type: "draw_strokes",
-        roomId,
-        playerId,
-        strokes: [stroke],
-        seq,
-      }).catch(() => {
-        /* best-effort live stream */
-      });
+      strokeQueue.current.push({ stroke, seq });
+      void flushStrokeQueue();
     },
-    [roomId, playerId]
+    [flushStrokeQueue]
   );
 
   const maybeStreamLiveStroke = useCallback(() => {
@@ -473,6 +489,10 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
 
   useEffect(() => {
     strokeSeq.current = 0;
+    strokeQueue.current = [];
+    strokeSending.current = false;
+    renderedPointCounts.current.clear();
+    previewedPointCount.current = 0;
   }, [turnId]);
 
   const sendFill = async (action: FillAction) => {

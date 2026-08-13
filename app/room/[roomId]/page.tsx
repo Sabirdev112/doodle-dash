@@ -32,6 +32,7 @@ import WaitingRoom from "@/components/WaitingRoom";
 
 import { tryReconnectRoom, requestRoomResync, useGameStore } from "@/lib/store";
 import { useDeadlineResolve } from "@/lib/useDeadlineResolve";
+import { useHintRevealTick } from "@/lib/useHintRevealTick";
 
 import ButtonSpinner from "@/components/ButtonSpinner";
 
@@ -117,6 +118,13 @@ export default function RoomPage({
   );
   useDeadlineResolve(roomId, inLobby && phase === "drawing", turnEndTime);
   useDeadlineResolve(roomId, inLobby && phase === "turn_end", phaseDeadline);
+  useHintRevealTick(
+    roomId,
+    inLobby && phase === "drawing" && Boolean(settings?.hintsEnabled),
+    turnEndTime,
+    settings?.turnDuration ?? 90,
+    settings?.maxHints ?? 3
+  );
 
   useEffect(() => {
     if (!inLobby) return;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { requestRoomResync } from "@/lib/store";
+import { requestResolveDeadlines } from "@/lib/store";
 
 /**
  * When a KV-stored deadline elapses, hit the API so the serverless
@@ -25,7 +25,7 @@ export function useDeadlineResolve(
             schedule(Math.max(0, deadline - Date.now()) + 30);
             return;
           }
-          await requestRoomResync(roomId);
+          await requestResolveDeadlines(roomId);
           schedule(1000);
         })();
       }, delay);

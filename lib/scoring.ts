@@ -1,10 +1,25 @@
-const FIRST_GUESS_POINTS = 300;
+import {
+  FIRST_GUESS_POINTS,
+  FIRST_PLACE_HALF_TIME_REDUCTION,
+} from "@/lib/types";
 
-export function getGuesserPoints(place: number): number {
-  if (place === 1) return FIRST_GUESS_POINTS;
-  if (place === 2) return Math.floor(FIRST_GUESS_POINTS / 2);
-  if (place === 3) return Math.floor(FIRST_GUESS_POINTS / 4);
-  return 35;
+/**
+ * First place at t=0 is 300. At 50% elapsed that is 30% less (210).
+ * Reduction is linear: 300 * (1 - 0.6 * elapsedRatio).
+ * 2nd gets half of the current first-place value; 3rd half of 2nd.
+ */
+export function getGuesserPoints(place: number, elapsedRatio = 0): number {
+  const clamped = Math.min(1, Math.max(0, elapsedRatio));
+  const reductionPerFullTurn = FIRST_PLACE_HALF_TIME_REDUCTION / 0.5;
+  const first = Math.max(
+    10,
+    Math.round(FIRST_GUESS_POINTS * (1 - reductionPerFullTurn * clamped))
+  );
+  let points = first;
+  for (let i = 1; i < place; i++) {
+    points = Math.floor(points / 2);
+  }
+  return Math.max(5, points);
 }
 
 /** Fixed per-guesser drawer points plus time-remaining bonus on last correct guess. */

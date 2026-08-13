@@ -20,6 +20,9 @@ export default function CreateRoomPage() {
   );
   const [customWords, setCustomWords] = useState("");
   const [hintsEnabled, setHintsEnabled] = useState(DEFAULT_ROOM_CREATE_OPTIONS.hintsEnabled);
+  const [maxHints, setMaxHints] = useState<1 | 2 | 3 | 4>(
+    DEFAULT_ROOM_CREATE_OPTIONS.maxHints
+  );
   const [wordMode, setWordMode] = useState<WordMode>(DEFAULT_ROOM_CREATE_OPTIONS.wordMode);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -53,6 +56,7 @@ export default function CreateRoomPage() {
       turnDuration,
       customWords: customWords || undefined,
       hintsEnabled,
+      maxHints,
       wordMode,
     });
 
@@ -169,6 +173,28 @@ export default function CreateRoomPage() {
             />
             <span className="doodle-label mb-0 text-base">Enable letter hints</span>
           </label>
+
+          {hintsEnabled && (
+            <label>
+              <span className="doodle-label text-base">Max letter hints</span>
+              <select
+                value={maxHints}
+                onChange={(e) =>
+                  setMaxHints(Number(e.target.value) as 1 | 2 | 3 | 4)
+                }
+                className="doodle-input"
+              >
+                <option value={1}>1 hint</option>
+                <option value={2}>2 hints</option>
+                <option value={3}>3 hints</option>
+                <option value={4}>4 hints</option>
+              </select>
+              <p className="mt-1 text-xs text-doodle-muted">
+                First hint at 30% of the turn, then every 10%. Words under 6
+                letters get at most 2; words under 3 letters get 1.
+              </p>
+            </label>
+          )}
 
           <label>
             <span className="doodle-label text-base">

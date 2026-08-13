@@ -175,9 +175,7 @@ export function usePusher(
         turnId?: string;
       }) => {
         const s = storeRef.current;
-        if (data.turnId && s.turnId && data.turnId !== s.turnId && s.phase === "drawing") {
-          return;
-        }
+        if (s.phase === "drawing") return;
         strokeOrderRef.current?.reset(0);
         s.applySnapshot({
           phase: "word_select",
@@ -185,8 +183,8 @@ export function usePusher(
           drawerId: data.drawerId,
           wordChoiceDeadline: data.deadline,
           wordChoices: data.choices ?? s.wordChoices,
-          chatMessages: [],
           canvasActions: [],
+          reactions: [],
           secretWord: null,
           wordDisplay: "",
           drawingStarted: false,
@@ -232,8 +230,8 @@ export function usePusher(
           wordChoices: [],
           wordChoiceDeadline: null,
           phaseDeadline: null,
-          chatMessages: [],
           canvasActions: [],
+          reactions: [],
           players: s.players.map((p) => ({
             ...p,
             isDrawer: p.id === data.drawerId,
@@ -304,8 +302,10 @@ export function usePusher(
     });
 
     channel.bind("canvas_cleared", () => {
+      const s = storeRef.current;
+      if (s.phase === "drawing" && s.canvasActions.length > 0) return;
       strokeOrder.reset(0);
-      storeRef.current.clearCanvas();
+      s.clearCanvas();
     });
 
     channel.bind("guess_result", (data: ChatMessage) => {
@@ -347,6 +347,8 @@ export function usePusher(
           players: data.players ?? [],
           crownHolderId: data.players?.find((p) => p.hasCrown)?.id ?? null,
           phaseDeadline: data.phaseDeadline ?? s.phaseDeadline,
+          canvasActions: [],
+          reactions: [],
         });
       }
     );

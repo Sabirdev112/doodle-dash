@@ -9,6 +9,8 @@ export interface RoomSettings {
   turnDuration: TurnDuration;
   customWords: string[];
   hintsEnabled: boolean;
+  /** Max letter hints to reveal (short words are capped further). */
+  maxHints: 1 | 2 | 3 | 4;
   wordMode: WordMode;
 }
 
@@ -19,6 +21,7 @@ export const DEFAULT_ROOM_CREATE_OPTIONS = {
   wordChoiceCount: 3 as const,
   turnDuration: 90 as TurnDuration,
   hintsEnabled: true,
+  maxHints: 3 as const,
   wordMode: "normal" as WordMode,
 };
 
@@ -66,7 +69,8 @@ export type ChatMessageKind =
   | "correct"
   | "close"
   | "system"
-  | "chat";
+  | "chat"
+  | "reaction";
 
 export interface ChatMessage {
   id: string;
@@ -111,6 +115,8 @@ export interface Room {
   turnEndTime: number | null;
   canvasActions: CanvasAction[];
   correctGuessers: string[];
+  /** Points awarded to each correct guesser this turn (same order as correctGuessers). */
+  correctGuessPoints: number[];
   chatMessages: ChatMessage[];
   crownHolderId: string | null;
   wordPool: string[];
@@ -217,6 +223,14 @@ export const ALL_GUESSED_HOLD_MS = 1_500;
 export const STROKE_FLUSH_INTERVAL_MS = 40;
 /** How long guessers wait for a missing stroke seq before skipping the gap. */
 export const STROKE_REORDER_STALL_MS = 100;
+/** First letter hint at this fraction of the turn. */
+export const HINT_FIRST_AT = 0.3;
+/** Additional letter hints every this fraction after the first. */
+export const HINT_EVERY = 0.1;
+/** First-place points at t=0; halved for 2nd, halved again for 3rd. */
+export const FIRST_GUESS_POINTS = 300;
+/** At 50% elapsed, first place is reduced by this fraction (0.3 = 30%). */
+export const FIRST_PLACE_HALF_TIME_REDUCTION = 0.3;
 /** Max chat lines kept server-side per room. */
 export const MAX_CHAT_MESSAGES = 200;
 /** Max canvas actions stored for the current turn. */

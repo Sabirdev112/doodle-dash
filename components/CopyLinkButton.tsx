@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface CopyLinkButtonProps {
   url: string;
@@ -44,6 +44,16 @@ export default function CopyLinkButton({
 }: CopyLinkButtonProps) {
   const [copied, setCopied] = useState(false);
   const [failed, setFailed] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const failedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      if (failedTimer.current) clearTimeout(failedTimer.current);
+    },
+    []
+  );
 
   const copy = async () => {
     if (disabled || !url) return;
@@ -51,10 +61,12 @@ export default function CopyLinkButton({
     const ok = await copyText(url);
     if (ok) {
       setCopied(true);
-      setTimeout(() => setCopied(false), 2200);
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopied(false), 2200);
     } else {
       setFailed(true);
-      setTimeout(() => setFailed(false), 3000);
+      if (failedTimer.current) clearTimeout(failedTimer.current);
+      failedTimer.current = setTimeout(() => setFailed(false), 3000);
     }
   };
 

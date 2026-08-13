@@ -25,6 +25,7 @@ const createSchema = z.object({
   ]),
   customWords: z.string().max(5000).optional(),
   hintsEnabled: z.boolean().optional(),
+  maxHints: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
   wordMode: z.enum(["normal", "hidden"]).optional(),
 });
 
@@ -59,6 +60,7 @@ export async function POST(req: NextRequest) {
       turnDuration,
       customWords,
       hintsEnabled,
+      maxHints,
       wordMode,
     } = parsed.data;
 
@@ -75,6 +77,7 @@ export async function POST(req: NextRequest) {
         turnDuration,
         customWords: customWords || undefined,
         hintsEnabled: hintsEnabled ?? true,
+        maxHints: maxHints ?? 3,
         wordMode: wordMode ?? "normal",
       },
       playerId,
